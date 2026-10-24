@@ -21,8 +21,9 @@ Tahap 1, bagian fondasi:
 - Mesin ujian (`service/ExamEngine.gs`): siswa masuk dengan token, soal/opsi diacak per siswa tanpa kunci terkirim ke browser, timer dari jam server, tanda ragu-ragu, simpan otomatis tiap 60 detik dan saat pindah tab, lanjut setelah browser tertutup, kumpul otomatis saat waktu habis (trigger tiap 10 menit), nilai dihitung saat submit
 - Rekap nilai per tes (`service/ResultService.gs`): status dan nilai tiap siswa peserta, ketuntasan terhadap KKM, ringkasan rata-rata/tertinggi/terendah, filter kelas, unduh CSV, jawaban siswa per soal beserta kunci, dan analisis butir soal (tingkat benar, sebaran pilihan PG/PGK). Ujian yang waktunya habis langsung dikumpulkan saat rekap dibuka.
 - Monitoring tes berjalan (`service/MonitorService.gs`) untuk PENGAWAS, GURU, dan ADMIN: status tiap siswa, jumlah soal terjawab, sisa waktu, simpan terakhir, tanda "mungkin terputus", jumlah pindah tab, diperbarui tiap 30 detik. Pengawas bisa menambah waktu satu siswa (timer siswa ikut berubah dalam 1 menit) dan mengumpulkan paksa (yang dinilai simpanan otomatis terakhir). Progres dibaca dari cache, bukan sheet, supaya ringan.
+- Alat uji beban (`LoadTest.gs`, `tools/loadtest.js`), lihat bagian Uji beban di bawah.
 
-Berikutnya: uji beban di Apps Script sungguhan.
+Berikutnya: menjalankan uji beban di Apps Script sungguhan, lalu menetapkan kapasitas per klaster dari hasilnya.
 
 ## Struktur
 
@@ -37,7 +38,8 @@ src/
     Auth.gs        login, logout, sesi, hash password
     Rbac.gs        peta izin per peran
     Api.gs         apiCall(route, sessionId, payload): satu pintu untuk client
-    Setup.gs       setupSiulin(), setupSuperAdmin(), setupTriggers() (dijalankan dari editor)
+    Setup.gs       setupSiulin(), setupSuperAdmin(), setupTriggers(), setupLoadTest() (dijalankan dari editor)
+    LoadTest.gs    data dan pintu doPost khusus uji beban (mati secara bawaan)
     repo/          SATU-SATUNYA kode yang menyentuh layanan Google
       GasPlatform.gs   adapter SpreadsheetApp/CacheService/LockService/Properties
       BaseRepo.gs      CRUD generik + cache + isolasi sekolah
@@ -52,6 +54,7 @@ src/
     pages/Topics.html, pages/Exams.html, pages/Questions.html,
     pages/Tests.html, pages/Tokens.html, pages/Results.html, pages/Monitoring.html, pages/MyExams.html, pages/Exam.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
+tools/loadtest.js  skrip uji beban (dijalankan di komputer, bukan di Apps Script)
 ```
 
 ## Aturan arsitektur
@@ -112,3 +115,31 @@ npm test
 Catatan: kolom `kelas_peserta` ditambahkan ke sheet Tests. Bila `setupSiulin()` sudah pernah dijalankan dan sheet Tests masih kosong, jalankan lagi; bila sudah berisi data, tambahkan kolom itu di akhir header secara manual.
 
 Setiap klaster memakai akun Google pemilik yang berbeda, karena batas 30 eksekusi serentak berlaku per akun.
+
+## Uji beban
+
+Tujuannya mengukur berapa siswa yang bisa mengerjakan serentak di satu klaster sebelum respons melambat atau gagal. Batas Apps Script yang paling berpengaruh adalah 30 eksekusi serentak per akun pemilik dan antrean kunci (LockService) saat auto-save ditulis ke sheet.
+
+Jalankan di project Apps Script **terpisah** dengan spreadsheet sendiri, jangan di klaster yang dipakai sekolah. Pakai akun pemilik yang jenisnya sama dengan klaster sungguhan (Workspace atau Gmail), karena kuotanya berbeda.
+
+1. Buat project baru: `clasp create --type standalone --title "SIULIN Uji Beban" --rootDir src`, lalu `clasp push`.
+2. Di editor, jalankan `setupSiulin`.
+3. Di Script Properties isi `LOADTEST_PASSWORD` (minimal 8 karakter) dan `LOADTEST_STUDENTS`, misalnya `600` supaya cukup untuk tiga kali uji 200 siswa.
+4. Jalankan `setupLoadTest`. Log menampilkan token dan perintah yang perlu dijalankan. Data yang dibuat: sekolah `UJIBEBAN`, siswa `ub001` dst., pengawas `ubawas`, ujian 40 soal, tes yang sedang berlangsung selama 4 jam.
+5. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone. Salin URL `/exec`.
+6. Di komputer (Node.js 18+), mulai dari jumlah kecil lalu naikkan:
+
+```
+node tools/loadtest.js --url <URL /exec> --token <TOKEN> --password <LOADTEST_PASSWORD> --students 50  --start 1   --minutes 10
+node tools/loadtest.js --url <URL /exec> --token <TOKEN> --password <LOADTEST_PASSWORD> --students 100 --start 51  --minutes 10
+node tools/loadtest.js --url <URL /exec> --token <TOKEN> --password <LOADTEST_PASSWORD> --students 200 --start 151 --minutes 15
+```
+
+   Setiap siswa hanya bisa mengerjakan sekali, jadi tiap putaran memakai rentang siswa baru (`--start`). Bila token habis masa berlakunya, buat token baru dari halaman Token (login `ubawas`).
+7. Selesai: jalankan `stopLoadTest` agar pintu uji ditutup.
+
+Opsi lain: `--save-every` (detik, bawaan 60 seperti browser), `--ramp` (login disebar sekian detik, bawaan 120), `--watchers` (pengawas yang memantau tiap 30 detik, bawaan 2), `--timeout`, `--out`.
+
+Membaca hasil: skrip mencetak waktu respons per rute (p50, p95, maks) dan kode gagal, lalu menyimpan detail ke `loadtest-result.json`. Syarat lulus yang dipakai: semua siswa terkumpul, gagal di bawah 1%, dan p95 auto-save di bawah 5 detik. Kode gagal `INTERNAL` biasanya berarti antrean kunci habis waktu; `HTTP_..._HTML` biasanya halaman error Google karena terlalu banyak eksekusi serentak. Jumlah siswa terbesar yang masih lulus adalah kapasitas satu klaster; beri cadangan sekitar 30%.
+
+Uji beban memakai pintu `doPost` yang meneruskan permintaan ke `apiCall` dengan pemeriksaan sesi dan izin yang sama, hanya untuk rute ujian dan monitoring, dan hanya bila Script Property `LOADTEST_ENABLED` bernilai `true`. Di klaster sekolah properti ini tidak pernah diisi.
