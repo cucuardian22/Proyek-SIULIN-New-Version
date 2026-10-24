@@ -61,7 +61,7 @@ var Schema = (function () {
       ['test_id', 'string'], ['school_id', 'string'], ['exam_id', 'string'],
       ['judul', 'string'], ['mulai', 'string'], ['selesai', 'string'],
       ['durasi_menit', 'number'], ['acak_soal', 'bool'], ['acak_opsi', 'bool'],
-      ['kkm', 'number']
+      ['kkm', 'number'], ['kelas_peserta', 'json']
     ], { cache: true }),
 
     Tokens: table('MASTER', 'token_id', 'school', [

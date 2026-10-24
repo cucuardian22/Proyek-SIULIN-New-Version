@@ -19,7 +19,9 @@ const FILES = {
   UserService: 'service/UserService.gs',
   TopicService: 'service/TopicService.gs',
   ExamService: 'service/ExamService.gs',
-  QuestionService: 'service/QuestionService.gs'
+  QuestionService: 'service/QuestionService.gs',
+  TestService: 'service/TestService.gs',
+  TokenService: 'service/TokenService.gs'
 };
 
 function loadApp(opts) {

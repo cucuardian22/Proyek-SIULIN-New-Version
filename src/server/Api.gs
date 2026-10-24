@@ -48,7 +48,15 @@ var Api = (function () {
     'question.create': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.create(ctx, p); } },
     'question.update': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.update(ctx, p); } },
     'question.remove': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.remove(ctx, p); } },
-    'question.import': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.importRows(ctx, p); } }
+    'question.import': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.importRows(ctx, p); } },
+
+    'test.list':     { permission: 'test.manage', handler: function (ctx, p) { return TestService.list(ctx, p); } },
+    'test.create':   { permission: 'test.manage', handler: function (ctx, p) { return TestService.create(ctx, p); } },
+    'test.update':   { permission: 'test.manage', handler: function (ctx, p) { return TestService.update(ctx, p); } },
+    'test.remove':   { permission: 'test.manage', handler: function (ctx, p) { return TestService.remove(ctx, p); } },
+
+    'token.list':     { permission: 'token.manage', handler: function (ctx) { return TokenService.list(ctx); } },
+    'token.generate': { permission: 'token.manage', handler: function (ctx, p) { return TokenService.generate(ctx, p); } }
   };
 
   function sanitize(payload) {
