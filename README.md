@@ -104,8 +104,8 @@ npm test
 ## Deploy satu klaster
 
 1. Pasang clasp: `npm install -g @google/clasp`, lalu `clasp login` dengan akun pemilik klaster.
-2. Buat project Apps Script baru (`clasp create --type standalone --title "SIULIN Klaster A" --rootDir src`), atau salin `.clasp.json.example` menjadi `.clasp.json` dan isi `scriptId`.
-3. `clasp push`.
+2. Buat project baru di [script.google.com](https://script.google.com) (New project, beri nama mis. "SIULIN Klaster A"), salin Script ID dari Project Settings, lalu salin `.clasp.json.example` menjadi `.clasp.json` dan isi `scriptId`. Jangan pakai `clasp create`: perintah itu menimpa `src/appsscript.json` dengan manifest kosong.
+3. `clasp push -f`.
 4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL spreadsheet MASTER dan ATTEMPT.
 5. Di Project Settings > Script Properties, isi `SETUP_ADMIN_USER` dan `SETUP_ADMIN_PASSWORD`, lalu jalankan `setupSuperAdmin`. Catat waktu hash di log; bila di atas 300 ms, turunkan `Config.HASH_ITERATIONS`.
 6. Jalankan `setupTriggers` agar ujian yang waktunya habis tetap dikumpulkan.
@@ -122,7 +122,7 @@ Tujuannya mengukur berapa siswa yang bisa mengerjakan serentak di satu klaster s
 
 Jalankan di project Apps Script **terpisah** dengan spreadsheet sendiri, jangan di klaster yang dipakai sekolah. Pakai akun pemilik yang jenisnya sama dengan klaster sungguhan (Workspace atau Gmail), karena kuotanya berbeda.
 
-1. Buat project baru: `clasp create --type standalone --title "SIULIN Uji Beban" --rootDir src`, lalu `clasp push`.
+1. Buat project baru "SIULIN Uji Beban" dengan cara yang sama seperti langkah 2 dan 3 di Deploy satu klaster (project di browser, `.clasp.json`, `clasp push -f`).
 2. Di editor, jalankan `setupSiulin`.
 3. Di Script Properties isi `LOADTEST_PASSWORD` (minimal 8 karakter) dan `LOADTEST_STUDENTS`, misalnya `600` supaya cukup untuk tiga kali uji 200 siswa.
 4. Jalankan `setupLoadTest`. Log menampilkan token dan perintah yang perlu dijalankan. Data yang dibuat: sekolah `UJIBEBAN`, siswa `ub001` dst., pengawas `ubawas`, ujian 40 soal, tes yang sedang berlangsung selama 4 jam.
