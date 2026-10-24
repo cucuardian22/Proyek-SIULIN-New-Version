@@ -102,7 +102,10 @@ var Api = (function () {
         return { ok: false, error: { code: e.code, message: e.message, details: e.details } };
       }
       Utils.log('error', 'apiCall gagal', { route: route, error: String(e && e.stack || e) });
-      return { ok: false, error: { code: 'INTERNAL', message: 'Terjadi kesalahan di server.' } };
+      var error = { code: 'INTERNAL', message: 'Terjadi kesalahan di server.' };
+      // Hanya di project uji beban: pesan galat ikut dikirim supaya tools/loadtest.js bisa merangkumnya.
+      if (Platform.prop('LOADTEST_ENABLED') === 'true') error.detail = String(e && e.message || e).slice(0, 300);
+      return { ok: false, error: error };
     }
   }
 

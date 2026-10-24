@@ -21,11 +21,27 @@ var Platform = (function () {
     PropertiesService.getScriptProperties().setProperty(key, value);
   }
 
+  // Galat sementara layanan Google (mis. "Service Spreadsheets timed out", "too many simultaneous
+  // invocations") muncul saat banyak eksekusi menyentuh spreadsheet yang sama. Diulang dua kali
+  // dengan jeda singkat. Penulisan ganda akibat pengulangan aman: pembaca memakai baris paling awal per id.
+  var TRANSIENT = /timed out|too many|simultaneous|unexpected error|service error|server error|try again|internal error|busy|failed while accessing/i;
+
+  function retrying(fn) {
+    for (var i = 0; ; i++) {
+      try {
+        return fn();
+      } catch (e) {
+        if (i >= 2 || !TRANSIENT.test(String(e && e.message || e))) throw e;
+        Utilities.sleep(300 * (i + 1) + Math.floor(Math.random() * 400));
+      }
+    }
+  }
+
   function spreadsheet(db) {
     if (spreadsheets[db]) return spreadsheets[db];
     var id = prop(db + '_ID');
     if (!id) throw new Error('Spreadsheet ' + db + ' belum dibuat. Jalankan setupSiulin() dulu.');
-    spreadsheets[db] = SpreadsheetApp.openById(id);
+    spreadsheets[db] = retrying(function () { return SpreadsheetApp.openById(id); });
     return spreadsheets[db];
   }
 
@@ -51,7 +67,7 @@ var Platform = (function () {
 
   var store = {
     readAll: function (db, name) {
-      var values = sheet(db, name).getDataRange().getValues();
+      var values = retrying(function () { return sheet(db, name).getDataRange().getValues(); });
       return { header: values[0] || [], rows: values.slice(1) };
     },
     append: function (db, name, rows) {
@@ -71,9 +87,11 @@ var Platform = (function () {
       // Sheet.appendRow atomik: banyak eksekusi bisa menambah baris bersamaan tanpa saling menimpa,
       // jadi auto-save, submit, login, dan mulai tes tidak perlu antre di kunci global.
       // Baris cadangan berformat teks disiapkan lebih dulu supaya nilai tidak diubah Sheets jadi tanggal/angka.
-      var sh = sheet(db, name);
-      if (sh.getMaxRows() - sh.getLastRow() < Config.SPARE_ROWS_MIN) provisionRows(sh);
-      sh.appendRow(values);
+      retrying(function () {
+        var sh = sheet(db, name);
+        if (sh.getMaxRows() - sh.getLastRow() < Config.SPARE_ROWS_MIN) provisionRows(sh);
+        sh.appendRow(values);
+      });
     },
     writeRow: function (db, name, dataIndex, values) {
       // dataIndex 0 = baris ke-2 (baris 1 adalah header).
@@ -82,10 +100,12 @@ var Platform = (function () {
   };
 
   var cacheApi = {
-    get: function (k) { return CacheService.getScriptCache().get(k); },
+    // Baca cache tidak boleh menggagalkan permintaan: bila CacheService galat, anggap kosong
+    // dan pemanggil membaca sheet. Tulis tetap melempar galat supaya pemanggil tahu.
+    get: function (k) { try { return CacheService.getScriptCache().get(k); } catch (e) { return null; } },
     put: function (k, v, ttl) { CacheService.getScriptCache().put(k, v, ttl); },
     remove: function (k) { CacheService.getScriptCache().remove(k); },
-    getAll: function (keys) { return CacheService.getScriptCache().getAll(keys); },
+    getAll: function (keys) { try { return CacheService.getScriptCache().getAll(keys); } catch (e) { return {}; } },
     putAll: function (obj, ttl) { CacheService.getScriptCache().putAll(obj, ttl); }
   };
 
