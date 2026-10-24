@@ -26,9 +26,13 @@ var Config = {
 
   LOCK_WAIT_MS: 20000,
 
-  // Baris kosong berformat teks yang selalu disiapkan di bawah data, untuk appendRow tanpa kunci.
+  // Tabel ber-slot (Sessions, Attempts, dan tabel per attempt): nomor baris dipesan di bawah kunci singkat,
+  // lalu ditulis tanpa kunci. Baris kosong berformat teks disiapkan per blok supaya pemesanan tetap cepat.
   SPARE_ROWS_MIN: 300,
   SPARE_ROWS_BLOCK: 2000,
+  // Bila penghitung slot hilang dari cache, nomor berikutnya dihitung ulang dari baris terakhir + jarak ini,
+  // supaya slot yang sudah dipesan tetapi belum ditulis (paling banyak 30 eksekusi serentak) tidak terpakai dua kali.
+  SLOT_GAP: 50,
 
   // Auto-save selalu masuk cache; ke sheet AnswerBatches paling sering sekali per selang ini.
   SAVE_SHEET_SECONDS: 180

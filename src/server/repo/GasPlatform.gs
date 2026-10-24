@@ -5,8 +5,8 @@
  *
  *   store():  readAll(db, sheet) -> { header: [], rows: [[]] }
  *             append(db, sheet, rows)          (dipanggil di dalam withLock)
- *             appendRow(db, sheet, values)     (tanpa kunci; aman untuk penulisan serentak)
- *             writeRow(db, sheet, dataIndex, values)
+ *             reserveRows(group, sheets, n)    -> dataIndex pertama dari n baris yang dipesan (kunci singkat)
+ *             writeRow(db, sheet, dataIndex, values)  (tanpa kunci untuk baris yang sudah dipesan)
  *   cache():  get, put, remove, getAll, putAll
  *   withLock(fn), uuid(), now(), hmacSha256Hex(key, msg), randomToken(), prop(key)
  */
@@ -51,18 +51,21 @@ var Platform = (function () {
     return sh;
   }
 
-  /** Tambah blok baris cadangan berformat teks. Hanya satu eksekusi yang mengerjakannya. */
-  function provisionRows(sh) {
-    var lock = LockService.getScriptLock();
-    if (!lock.tryLock(Config.LOCK_WAIT_MS)) return; // eksekusi lain sedang menambah baris
-    try {
-      if (sh.getMaxRows() - sh.getLastRow() >= Config.SPARE_ROWS_MIN) return;
-      var extra = Config.SPARE_ROWS_BLOCK;
-      sh.insertRowsAfter(sh.getMaxRows(), extra);
-      sh.getRange(sh.getMaxRows() - extra + 1, 1, extra, sh.getMaxColumns()).setNumberFormat('@');
-    } finally {
-      lock.releaseLock();
-    }
+  /** Pastikan setiap sheet punya baris sampai dataIndex rows-1, berformat teks. Mengembalikan kapasitas terkecil. */
+  function ensureRows(sheets, rows) {
+    var cap = Infinity;
+    sheets.forEach(function (t) {
+      var sh = sheet(t.db, t.name);
+      var max = sh.getMaxRows();
+      if (max < rows + 1) {
+        var extra = rows + 1 - max;
+        sh.insertRowsAfter(max, extra);
+        sh.getRange(max + 1, 1, extra, sh.getMaxColumns()).setNumberFormat('@');
+        max += extra;
+      }
+      cap = Math.min(cap, max - 1);
+    });
+    return cap;
   }
 
   var store = {
@@ -83,19 +86,33 @@ var Platform = (function () {
       }
       sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
     },
-    appendRow: function (db, name, values) {
-      // Sheet.appendRow atomik: banyak eksekusi bisa menambah baris bersamaan tanpa saling menimpa,
-      // jadi auto-save, submit, login, dan mulai tes tidak perlu antre di kunci global.
-      // Baris cadangan berformat teks disiapkan lebih dulu supaya nilai tidak diubah Sheets jadi tanggal/angka.
-      retrying(function () {
-        var sh = sheet(db, name);
-        if (sh.getMaxRows() - sh.getLastRow() < Config.SPARE_ROWS_MIN) provisionRows(sh);
-        sh.appendRow(values);
+    reserveRows: function (group, sheets, count) {
+      // Hanya penghitung yang dikerjakan di dalam kunci (dua akses cache), kecuali saat penghitung
+      // hilang dari cache atau baris cadangan perlu ditambah (sekali tiap Config.SPARE_ROWS_BLOCK baris).
+      var nextKey = 'slot:' + group;
+      var capKey = 'slotcap:' + group;
+      return withLock(function () {
+        var c = cacheApi.getAll([nextKey, capKey]);
+        var next = c[nextKey] === undefined || c[nextKey] === null ? NaN : Number(c[nextKey]);
+        if (!(next >= 0)) {
+          next = 0;
+          sheets.forEach(function (t) { next = Math.max(next, sheet(t.db, t.name).getLastRow() - 1); });
+          next += Config.SLOT_GAP;
+        }
+        var cap = c[capKey] === undefined || c[capKey] === null ? NaN : Number(c[capKey]);
+        if (!(cap > 0) || next + count + Config.SPARE_ROWS_MIN > cap) {
+          cap = ensureRows(sheets, next + count + Config.SPARE_ROWS_BLOCK);
+        }
+        var o = {};
+        o[nextKey] = String(next + count);
+        o[capKey] = String(cap);
+        try { cacheApi.putAll(o, 21600); } catch (e) { /* penghitung dihitung ulang dengan jarak aman */ }
+        return next;
       });
     },
     writeRow: function (db, name, dataIndex, values) {
       // dataIndex 0 = baris ke-2 (baris 1 adalah header).
-      sheet(db, name).getRange(dataIndex + 2, 1, 1, values.length).setValues([values]);
+      retrying(function () { sheet(db, name).getRange(dataIndex + 2, 1, 1, values.length).setValues([values]); });
     }
   };
 

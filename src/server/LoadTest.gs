@@ -7,6 +7,9 @@
  *  handlePost()  isi doPost: meneruskan JSON {route, session_id, payload} ke Api.handle,
  *                hanya bila Script Property LOADTEST_ENABLED = 'true' dan hanya untuk rute
  *                yang dipakai siswa dan pengawas saat ujian. Skrip tools/loadtest.js memanggilnya.
+ *  verify()      rute 'loadtest.verify': untuk setiap username, apakah baris Sessions, Attempts,
+ *                Results, dan Answers-nya benar-benar ada di sheet. Dipanggil loadtest.js di akhir
+ *                putaran, karena balasan "berhasil" belum menjamin barisnya tidak tertimpa.
  *
  * doPost berjalan dengan kuota yang sama dengan google.script.run (eksekusi sebagai pemilik),
  * jadi hasilnya mewakili beban browser siswa sungguhan.
@@ -78,6 +81,38 @@ var LoadTest = (function () {
     return { kode_sekolah: SCHOOL_CODE, kelas: KELAS, test_id: test.test_id, token: token.kode, students: students, pengawas: 'ubawas' };
   }
 
+  /**
+   * @param {{usernames:string[]}} payload
+   * @return {Object<string, {sesi:boolean, attempt:boolean, hasil:boolean, jawaban:boolean}>}
+   */
+  function verify(payload) {
+    var SYSTEM = Auth.SYSTEM;
+    var school = SchoolRepo.findByCode(SYSTEM, SCHOOL_CODE);
+    if (!school) Utils.fail('NOT_FOUND', 'Sekolah ' + SCHOOL_CODE + ' belum dibuat.');
+    var scope = { school_id: school.school_id };
+    var names = (payload && Array.isArray(payload.usernames) ? payload.usernames : []).slice(0, 2000).map(String);
+    var byName = {};
+    Repos.users().findMany(SYSTEM, scope).forEach(function (u) { byName[u.username] = u; });
+    var tests = Repos.tests().findMany(SYSTEM, scope);
+    function ids(repo, field, filter) {
+      var set = {};
+      repo.findMany(SYSTEM, filter).forEach(function (r) { set[r[field]] = true; });
+      return set;
+    }
+    var sessions = ids(Repos.sessions(), 'user_id', {});
+    var attempts = ids(Repos.attempts(), 'attempt_id', scope);
+    var results = ids(Repos.results(), 'attempt_id', scope);
+    var answers = ids(Repos.answers(), 'attempt_id', scope);
+    var out = {};
+    names.forEach(function (name) {
+      var u = byName[name];
+      var mine = u ? tests.map(function (t) { return ExamEngine.attemptIdFor(t.test_id, u.user_id); }) : [];
+      function any(set) { return mine.some(function (id) { return !!set[id]; }); }
+      out[name] = { sesi: !!(u && sessions[u.user_id]), attempt: any(attempts), hasil: any(results), jawaban: any(answers) };
+    });
+    return out;
+  }
+
   /** @param {string} text  isi body POST */
   function handlePost(text) {
     if (Platform.prop('LOADTEST_ENABLED') !== 'true') {
@@ -87,13 +122,18 @@ var LoadTest = (function () {
     try { body = JSON.parse(text || ''); } catch (e) {
       return { ok: false, error: { code: 'INVALID_INPUT', message: 'Body harus JSON.' } };
     }
+    if (body && body.route === 'loadtest.verify') {
+      try { return { ok: true, data: verify(body.payload) }; } catch (e) {
+        return { ok: false, error: { code: e.code || 'INTERNAL', message: String(e && e.message || e).slice(0, 300) } };
+      }
+    }
     if (!body || ROUTES.indexOf(body.route) < 0) {
       return { ok: false, error: { code: 'NOT_FOUND', message: 'Rute tidak tersedia untuk uji beban.' } };
     }
     return Api.handle(body.route, body.session_id || null, body.payload || {});
   }
 
-  return { SCHOOL_CODE: SCHOOL_CODE, ROUTES: ROUTES, prepare: prepare, handlePost: handlePost };
+  return { SCHOOL_CODE: SCHOOL_CODE, ROUTES: ROUTES, prepare: prepare, handlePost: handlePost, verify: verify };
 })();
 
 if (typeof module !== 'undefined') module.exports = LoadTest;

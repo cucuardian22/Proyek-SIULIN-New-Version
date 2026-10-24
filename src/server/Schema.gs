@@ -8,6 +8,12 @@
  * scope:
  *   'school'  -> baris difilter dengan school_id sesi (kecuali SUPER_ADMIN/sistem)
  *   'global'  -> tidak terikat sekolah
+ *
+ * slot (tabel yang ditulis serentak oleh siswa): nomor baris dipesan dulu di bawah kunci singkat,
+ * lalu baris ditulis ke nomor itu tanpa kunci. appendRow serentak terbukti bisa saling menimpa
+ * (uji beban 250 siswa: baris Sessions, Attempts, Results, dan Answers hilang). Kelompok 'attempt'
+ * memakai satu nomor untuk satu attempt di keempat sheet-nya, jadi auto-save dan submit menulis ke
+ * baris milik attempt itu sendiri tanpa memesan lagi.
  */
 var Schema = (function () {
   // Spreadsheet (db): MASTER (data induk + sesi), ATTEMPT (Attempts), JAWABAN (auto-save + jawaban akhir),
@@ -24,6 +30,8 @@ var Schema = (function () {
       scope: scope,
       columns: columns,
       cache: !!opts.cache,
+      // Kelompok slot: tabel yang barisnya ditulis ke nomor baris yang dipesan (lihat BaseRepo.insert).
+      slot: opts.slot || null,
       // Baris dengan kondisi ini terbaca oleh semua sekolah (mis. soal GLOBAL).
       sharedRead: opts.sharedRead || null
     };
@@ -76,28 +84,28 @@ var Schema = (function () {
     Sessions: table('MASTER', 'session_id', 'global', [
       ['session_id', 'string'], ['user_id', 'string'], ['school_id', 'string'],
       ['role', 'string'], ['expires_at', 'string']
-    ]),
+    ], { slot: 'session' }),
 
     Attempts: table('ATTEMPT', 'attempt_id', 'school', [
       ['attempt_id', 'string'], ['test_id', 'string'], ['school_id', 'string'],
       ['user_id', 'string'], ['mulai', 'string'], ['batas_waktu', 'string'],
       ['selesai', 'string'], ['status', 'string'], ['urutan_soal', 'json'],
-      ['ip_ua', 'string'], ['jumlah_pindah_tab', 'number']
-    ]),
+      ['ip_ua', 'string'], ['jumlah_pindah_tab', 'number'], ['slot', 'number']
+    ], { slot: 'attempt' }),
 
     AnswerBatches: table('JAWABAN', 'batch_id', 'school', [
       ['batch_id', 'string'], ['attempt_id', 'string'], ['school_id', 'string'],
       ['seq', 'number'], ['jawaban_json', 'json'], ['jumlah_pindah_tab', 'number'],
       ['client_ts', 'string'], ['server_ts', 'string']
-    ]),
+    ], { slot: 'attempt' }),
 
-    // Jawaban akhir satu baris per attempt (satu appendRow saat submit, tanpa kunci).
+    // Jawaban akhir satu baris per attempt, di nomor baris (slot) yang sama dengan attempt-nya.
     // jawaban = { question_id: jawaban }, skor = { question_id: skor }.
     // PostgreSQL: dipecah jadi tabel answers (attempt_id, question_id) saat migrasi.
     Answers: table('JAWABAN', 'attempt_id', 'school', [
       ['attempt_id', 'string'], ['test_id', 'string'], ['school_id', 'string'],
       ['jawaban', 'json'], ['skor', 'json']
-    ]),
+    ], { slot: 'attempt' }),
 
     // Baris Results = attempt sudah ditutup. status/selesai/jumlah_pindah_tab di sini yang berlaku;
     // kolom yang sama di Attempts disalin oleh trigger berkala. Bila ada dua baris (submit ganda
@@ -107,7 +115,7 @@ var Schema = (function () {
       ['user_id', 'string'], ['status', 'string'], ['selesai', 'string'],
       ['jumlah_pindah_tab', 'number'], ['skor_otomatis', 'number'], ['skor_uraian', 'number'],
       ['nilai_akhir', 'number'], ['status_koreksi', 'string']
-    ])
+    ], { slot: 'attempt' })
   };
 
   function get(name) {
@@ -125,7 +133,13 @@ var Schema = (function () {
     return out;
   }
 
-  return { get: get, names: names, dbs: dbs, TABLES: TABLES };
+  /** Sheet anggota satu kelompok slot: [{db, name}]. */
+  function slotSheets(group) {
+    return names().filter(function (n) { return TABLES[n].slot === group; })
+      .map(function (n) { return { db: TABLES[n].db, name: n }; });
+  }
+
+  return { get: get, names: names, dbs: dbs, slotSheets: slotSheets, TABLES: TABLES };
 })();
 
 if (typeof module !== 'undefined') module.exports = Schema;

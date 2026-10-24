@@ -118,7 +118,9 @@ var BaseRepo = (function () {
     }
     var data = Platform.store().readAll(this.table.db, this.tableName);
     var self = this;
-    var objs = data.rows.map(function (r) { return self._toObj(data.header, r); });
+    // Baris kosong (slot yang dipesan tetapi belum atau tidak pernah ditulis) dilewati.
+    var objs = data.rows.map(function (r) { return self._toObj(data.header, r); })
+      .filter(function (o) { return !Utils.isBlank(o[self.table.id]); });
     if (this.table.cache) this._writeCache(objs);
     return objs;
   };
@@ -172,6 +174,11 @@ var BaseRepo = (function () {
     assertCtx(ctx);
     var self = this;
     var rows = objs.map(function (o) { return self._prepareNew(ctx, o); });
+    if (this.table.slot) {
+      var first = this.reserve(rows.length);
+      rows.forEach(function (r, i) { self._writeAt(first + i, r); });
+      return rows;
+    }
     Platform.withLock(function () {
       Platform.store().append(self.table.db, self.tableName, rows.map(function (r) { return self._toRow(r); }));
       self._invalidate();
@@ -179,12 +186,29 @@ var BaseRepo = (function () {
     return rows;
   };
 
-  /** Satu baris: appendRow tanpa kunci global, supaya penulisan serentak (auto-save, submit, login) tidak antre. */
-  BaseRepo.prototype.insert = function (ctx, obj) {
-    assertCtx(ctx);
-    var row = this._prepareNew(ctx, obj);
-    Platform.store().appendRow(this.table.db, this.tableName, this._toRow(row));
+  /** Pesan n nomor baris berurutan di kelompok slot tabel ini. Mengembalikan nomor pertama. */
+  BaseRepo.prototype.reserve = function (count) {
+    var group = this.table.slot;
+    if (!group) throw new Error('Tabel ' + this.tableName + ' tidak memakai slot.');
+    return Platform.store().reserveRows(group, Schema.slotSheets(group), count || 1);
+  };
+
+  BaseRepo.prototype._writeAt = function (slot, row) {
+    Platform.store().writeRow(this.table.db, this.tableName, slot, this._toRow(row));
     this._invalidate();
+  };
+
+  /**
+   * Satu baris. Tabel ber-slot: ditulis ke slot yang diberikan (baris milik attempt itu, ditimpa bila
+   * sudah ada) atau ke slot baru yang dipesan; tanpa kunci saat menulis. Tabel lain (data induk yang
+   * diubah admin, jarang serentak): ditambahkan di bawah kunci.
+   * @param {number=} slot
+   */
+  BaseRepo.prototype.insert = function (ctx, obj, slot) {
+    assertCtx(ctx);
+    if (!this.table.slot) return this.insertMany(ctx, [obj])[0];
+    var row = this._prepareNew(ctx, obj);
+    this._writeAt(slot === undefined || slot === null || slot === '' ? this.reserve(1) : Number(slot), row);
     return row;
   };
 

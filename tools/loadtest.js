@@ -11,7 +11,10 @@
  * --watchers pengawas virtual memanggil monitor.list tiap 30 detik.
  * Login siswa disebar merata selama --ramp detik, seperti siswa yang datang bergiliran.
  *
- * Hasil: waktu respons per rute (p50, p95, maks), jumlah gagal per kode, dan file JSON.
+ * Di akhir putaran, server diminta memeriksa (rute loadtest.verify) bahwa setiap siswa yang berhasil
+ * login, mulai, dan kumpul benar-benar punya baris Sessions, Attempts, Results, dan Answers di sheet.
+ *
+ * Hasil: waktu respons per rute (p50, p95, maks), jumlah gagal per kode, baris hilang, dan file JSON.
  */
 'use strict';
 const fs = require('node:fs');
@@ -110,14 +113,17 @@ async function retrySubmit(fn) {
 
 async function student(client, opts, n, state) {
   const username = opts.prefix + String(n).padStart(3, '0');
+  const me = state.users[username] = { login: false, start: false, submit: false };
   await sleep(Math.random() * opts.ramp * 1000);
   try {
     const sid = (await retry(() => client.call('auth.login', null, { kode_sekolah: opts.school, username, password: opts.password }))).session_id;
+    me.login = true;
     const tests = await retry(() => client.call('attempt.list', sid, {}));
     const t = tests.find((x) => x.status === 'BERLANGSUNG');
     if (!t) throw new Error('tidak ada tes berlangsung untuk ' + username);
     const pkg = await retry(() => client.call('attempt.start', sid, { test_ref: t.test_id, token: opts.token }));
     state.started++;
+    me.start = true;
 
     const jawaban = Object.assign({}, pkg.saved ? pkg.saved.jawaban : {});
     let seq = pkg.saved ? pkg.saved.seq : 0;
@@ -133,6 +139,7 @@ async function student(client, opts, n, state) {
     }
     await retrySubmit(() => client.call('attempt.submit', sid, { attempt_ref: pkg.attempt_id, seq: seq + 1, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }));
     state.submitted++;
+    me.submit = true;
   } catch (e) {
     state.failed.push(username + ': ' + e.message);
   }
@@ -177,10 +184,31 @@ function peakPerMinute(calls) {
   return Math.max(0, ...Object.values(buckets));
 }
 
+/**
+ * Baris yang hilang dari sheet walaupun server sudah membalas berhasil.
+ * @return {{ok:boolean, error?:string, sesi:string[], attempt:string[], hasil:string[]}}
+ */
+async function verifyRows(client, users) {
+  const names = Object.keys(users).filter((u) => users[u].login);
+  let found;
+  try { found = await retry(() => client.call('loadtest.verify', null, { usernames: names })); } catch (e) {
+    return { ok: false, error: e.message, sesi: [], attempt: [], hasil: [] };
+  }
+  const miss = { ok: true, sesi: [], attempt: [], hasil: [] };
+  names.forEach((u) => {
+    const f = found[u] || {};
+    if (!f.sesi) miss.sesi.push(u);
+    if (users[u].start && !f.attempt) miss.attempt.push(u);
+    if (users[u].submit && !(f.hasil && f.jawaban)) miss.hasil.push(u);
+  });
+  miss.ok = !miss.sesi.length && !miss.attempt.length && !miss.hasil.length;
+  return miss;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const client = createClient(opts);
-  const state = { started: 0, submitted: 0, failed: [], done: false };
+  const state = { started: 0, submitted: 0, failed: [], done: false, users: {} };
   const t0 = Date.now();
   console.log('Uji beban: ' + opts.students + ' siswa, ' + opts.minutes + ' menit, simpan tiap ' + opts['save-every'] +
     ' dtk, login disebar ' + opts.ramp + ' dtk, ' + opts.watchers + ' pengawas.');
@@ -219,12 +247,21 @@ async function main() {
   }
   if (state.failed.length) console.log('Siswa/pengawas gagal (' + state.failed.length + '):\n  ' + state.failed.slice(0, 20).join('\n  '));
 
-  const save = rows.find((r) => r.route === 'attempt.save');
-  const passed = state.submitted === opts.students && failed / Math.max(1, total) < 0.01 && (!save || save.p95 < 5000);
-  console.log('\nKesimpulan: ' + (passed ? 'LULUS' : 'TIDAK LULUS') +
-    ' (syarat: semua siswa terkumpul, gagal < 1%, p95 auto-save < 5 detik).');
+  console.log('\nMemeriksa baris di sheet...');
+  const rowsCheck = await verifyRows(client, state.users);
+  if (!rowsCheck.ok && rowsCheck.error) {
+    console.log('Pemeriksaan baris gagal: ' + rowsCheck.error + ' (kode server versi lama? push kode terbaru dulu).');
+  } else {
+    console.log('Baris hilang: sesi ' + rowsCheck.sesi.length + ', attempt ' + rowsCheck.attempt.length + ', hasil/jawaban ' + rowsCheck.hasil.length +
+      (rowsCheck.ok ? ' (semua lengkap).' : '. Contoh: ' + rowsCheck.sesi.concat(rowsCheck.attempt, rowsCheck.hasil).slice(0, 10).join(', ')));
+  }
 
-  fs.writeFileSync(opts.out, JSON.stringify({ opts: Object.assign({}, opts, { password: '***' }), summary: rows, state, calls: client.calls }, null, 1));
+  const save = rows.find((r) => r.route === 'attempt.save');
+  const passed = state.submitted === opts.students && failed / Math.max(1, total) < 0.01 && (!save || save.p95 < 5000) && rowsCheck.ok;
+  console.log('\nKesimpulan: ' + (passed ? 'LULUS' : 'TIDAK LULUS') +
+    ' (syarat: semua siswa terkumpul, gagal < 1%, p95 auto-save < 5 detik, tidak ada baris hilang di sheet).');
+
+  fs.writeFileSync(opts.out, JSON.stringify({ opts: Object.assign({}, opts, { password: '***' }), summary: rows, rows_check: rowsCheck, state, calls: client.calls }, null, 1));
   console.log('Detail tersimpan di ' + opts.out);
   process.exitCode = passed ? 0 : 1;
 }

@@ -81,3 +81,28 @@ test('cache tabel dibuang setelah tulis', () => {
   Repos.exams().insert(A, { nama_mapel: 'IPS' });
   assert.equal(Repos.exams().findMany(A).length, 2);
 });
+
+test('tabel ber-slot: setiap insert dapat baris sendiri, dan slot tidak terpakai ulang saat penghitung hilang dari cache', () => {
+  const platform = loadApp();
+  const S = { system: true };
+  const s1 = Repos.sessions().insert(S, { user_id: 'u1', expires_at: 'x' });
+  const s2 = Repos.sessions().insert(S, { user_id: 'u2', expires_at: 'x' });
+  const rows = platform._sheets['MASTER:Sessions'].rows;
+  const first = platform._reserved[0].first;
+  assert.equal(first, Config.SLOT_GAP, 'sheet baru: mulai setelah jarak aman');
+  assert.equal(rows[first][0], s1.session_id);
+  assert.equal(rows[first + 1][0], s2.session_id);
+  assert.deepEqual(Repos.sessions().findMany(S, {}).map((s) => s.user_id), ['u1', 'u2'], 'baris kosong dilewati');
+
+  // Slot dipesan di kelompok attempt tetapi barisnya hanya di Results: penghitung baru tetap melewatinya.
+  const r = Repos.results().insert(S, { attempt_id: 'att-1', school_id: 'sc' });
+  const resultSlot = platform._reserved[2].first;
+  platform._cache.clear();
+  Repos.attempts().insert(S, { attempt_id: 'att-2', school_id: 'sc' });
+  assert.ok(platform._reserved[3].first > resultSlot, 'tidak menimpa baris Results yang sudah ada');
+  assert.equal(platform._sheets['HASIL:Results'].rows[resultSlot][0], r.attempt_id);
+
+  const s3 = Repos.sessions().insert(S, { user_id: 'u3', expires_at: 'x' });
+  assert.ok(platform._reserved[4].first >= first + 2 + Config.SLOT_GAP);
+  assert.equal(Repos.sessions().findById(S, s3.session_id).user_id, 'u3');
+});

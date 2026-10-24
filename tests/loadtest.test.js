@@ -70,3 +70,26 @@ test('cache tabel yang potongannya tidak cocok dibaca ulang dari sheet', () => {
   platform.cache().put('tbl:Users:0', '[{"rusak":', 600);
   assert.equal(Repos.users().findMany(Auth.SYSTEM, { role: 'SISWA' }).length, 2);
 });
+
+test('loadtest.verify melaporkan baris yang hilang dari sheet', () => {
+  const platform = setup();
+  const info = LoadTest.prepare({ students: 2, password: 'ujibeban123' });
+  for (const u of ['ub001', 'ub002']) {
+    const sid = ok(post({ route: 'auth.login', payload: { kode_sekolah: 'UJIBEBAN', username: u, password: 'ujibeban123' } })).session_id;
+    const pkg = ok(post({ route: 'attempt.start', session_id: sid, payload: { test_ref: info.test_id, token: info.token } }));
+    ok(post({ route: 'attempt.submit', session_id: sid, payload: { attempt_ref: pkg.attempt_id, seq: 1, jawaban: {} } }));
+  }
+  const all = { sesi: true, attempt: true, hasil: true, jawaban: true };
+  assert.deepEqual(ok(post({ route: 'loadtest.verify', payload: { usernames: ['ub001', 'ub002'] } })), { ub001: all, ub002: all });
+
+  // tiru baris Results ub002 yang tertimpa
+  const rows = platform._sheets['HASIL:Results'].rows;
+  const user2 = Repos.users().findOne(Auth.SYSTEM, { username: 'ub002' }).user_id;
+  const i = rows.findIndex((r) => r[3] === user2);
+  rows[i] = rows[i].map(() => '');
+  const r = ok(post({ route: 'loadtest.verify', payload: { usernames: ['ub001', 'ub002', 'ub999'] } }));
+  assert.deepEqual(r.ub002, { sesi: true, attempt: true, hasil: false, jawaban: true });
+  assert.deepEqual(r.ub999, { sesi: false, attempt: false, hasil: false, jawaban: false });
+  setup(false);
+  assert.equal(post({ route: 'loadtest.verify', payload: {} }).error.code, 'DISABLED');
+});

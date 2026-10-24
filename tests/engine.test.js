@@ -89,7 +89,7 @@ test('auto-save lalu lanjut di perangkat lain tanpa token, jawaban terakhir kemb
 
   env.platform._advance(Config.SAVE_SHEET_SECONDS);
   ok(call(env.ani, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 3, jawaban: { [pg.question_id]: 'C' }, jumlah_pindah_tab: 1 }));
-  assert.equal(batches(), 2);
+  assert.equal(batches(), 1, 'simpanan ke sheet menimpa baris milik attempt, bukan menambah baris');
   Platform._cache.clear(); // cache hilang: attempt dan jawaban dibaca dari sheet
   again = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id }));
   assert.equal(again.attempt_id, pkg.attempt_id);
@@ -190,7 +190,7 @@ test('dua klik Mulai bersamaan menghasilkan attempt yang sama', () => {
   assert.notEqual(ok(call(env.budi, 'attempt.start', { test_ref: env.t.test_id, token: kode })).attempt_id, first.attempt_id);
 });
 
-test('jalur siswa tidak memakai kunci global', () => {
+test('jalur siswa: kunci hanya untuk memesan slot saat login dan mulai, auto-save dan submit tanpa kunci', () => {
   const env = seed();
   const kode = openTest(env);
   let locks = 0;
@@ -198,12 +198,37 @@ test('jalur siswa tidak memakai kunci global', () => {
   Platform.withLock = (fn) => { locks++; return fn(); };
   try {
     const sid = loginAs('ESPEGE', 'ani', 'siswa123');
+    assert.equal(locks, 1);
     ok(call(sid, 'attempt.list'));
     const pkg = ok(call(sid, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
+    assert.equal(locks, 2);
     ok(call(sid, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 1, jawaban: {} }));
     ok(call(sid, 'attempt.submit', { attempt_ref: pkg.attempt_id, seq: 2, jawaban: {} }));
   } finally {
     Platform.withLock = original;
   }
-  assert.equal(locks, 0);
+  assert.equal(locks, 2);
+});
+
+test('auto-save, jawaban, dan hasil ditulis di slot milik attempt', () => {
+  const env = seed();
+  const kode = openTest(env);
+  const a = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
+  const b = ok(call(env.budi, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
+  const slotA = Repos.attempts().findById(Auth.SYSTEM, a.attempt_id).slot;
+  const slotB = Repos.attempts().findById(Auth.SYSTEM, b.attempt_id).slot;
+  assert.notEqual(slotA, slotB);
+  const idAt = (sheet, slot) => (Platform._sheets[sheet].rows[slot] || [])[0];
+  assert.equal(idAt('ATTEMPT:Attempts', slotA), a.attempt_id);
+
+  ok(call(env.ani, 'attempt.save', { attempt_ref: a.attempt_id, seq: 1, jawaban: {} }));
+  ok(call(env.budi, 'attempt.submit', { attempt_ref: b.attempt_id, seq: 1, jawaban: {} }));
+  ok(call(env.ani, 'attempt.submit', { attempt_ref: a.attempt_id, seq: 2, jawaban: {} }));
+  assert.equal(Platform._sheets['JAWABAN:AnswerBatches'].rows[slotA][1], a.attempt_id);
+  assert.equal(idAt('JAWABAN:Answers', slotA), a.attempt_id);
+  assert.equal(idAt('HASIL:Results', slotA), a.attempt_id);
+  assert.equal(idAt('HASIL:Results', slotB), b.attempt_id);
+  // baris kosong di antara slot tidak terbaca sebagai data
+  assert.equal(Repos.results().findMany(Auth.SYSTEM, {}).length, 2);
+  assert.equal(Repos.answerBatches().findMany(Auth.SYSTEM, {}).length, 1);
 });

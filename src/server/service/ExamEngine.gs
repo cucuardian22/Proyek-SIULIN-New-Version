@@ -1,14 +1,15 @@
 /**
  * Mesin ujian untuk SISWA: daftar tes, mulai dengan token, paket soal, auto-save, submit.
  *
- * Bagian ini dipanggil serentak oleh ratusan siswa, jadi tidak ada jalur siswa yang memakai
- * kunci global (LockService). Semua penulisan berupa satu appendRow, yang atomik:
- *  - Mulai: satu baris Attempts. attempt_id diturunkan dari test_id + user_id dan urutan acak
- *    diturunkan dari attempt_id, jadi dua klik "Mulai" bersamaan menghasilkan attempt yang sama.
- *  - Auto-save: selalu ke cache ('ans:'), ke sheet AnswerBatches paling sering tiap
- *    Config.SAVE_SHEET_SECONDS. Lanjut di perangkat lain membaca cache dulu, lalu sheet.
- *  - Submit: satu baris Answers (semua jawaban + skor) dan satu baris Results. Baris Results
- *    menandai attempt sudah ditutup; status di Attempts disalin oleh trigger berkala (syncClosed).
+ * Bagian ini dipanggil serentak oleh ratusan siswa. Penulisan tidak memakai appendRow (yang bisa
+ * saling menimpa bila serentak), tetapi nomor baris (slot) milik attempt:
+ *  - Mulai: memesan satu slot (kunci singkat, hanya penghitung) lalu menulis baris Attempts ke slot itu.
+ *    attempt_id diturunkan dari test_id + user_id dan urutan acak diturunkan dari attempt_id, jadi dua
+ *    klik "Mulai" bersamaan menghasilkan attempt yang sama.
+ *  - Auto-save: selalu ke cache ('ans:'), dan paling sering tiap Config.SAVE_SHEET_SECONDS menimpa
+ *    baris AnswerBatches di slot attempt. Lanjut di perangkat lain membaca cache dulu, lalu sheet.
+ *  - Submit: baris Answers (semua jawaban + skor) dan baris Results di slot attempt, tanpa kunci.
+ *    Baris Results menandai attempt sudah ditutup; status di Attempts disalin trigger berkala (syncClosed).
  *
  * urutan_soal di Attempts: [{ q: question_id, o: [id opsi sesuai tampilan] | null }].
  * Jawaban selalu memakai id opsi asli, jadi pengacakan hanya memengaruhi tampilan.
@@ -18,6 +19,7 @@ var ExamEngine = (function () {
   var CACHE_SECONDS = 6 * 60 * 60;
   var AUTO_SUBMIT_SLACK_SECONDS = 15;  // selisih jam perangkat yang masih dianggap "waktu habis"
   var MAX_EXTEND_MINUTES = 60;
+  var SYNC_MAX = 60;
   var SYSTEM = { system: true };
 
   function nowMs() { return Platform.now().getTime(); }
@@ -114,6 +116,9 @@ var ExamEngine = (function () {
     results = results || closedResults();
     return list.map(function (a) { return a.status === 'PROGRESS' ? applyResult(a, results[a.attempt_id]) : a; });
   }
+
+  /** Slot attempt; null untuk attempt lama tanpa slot (penulisannya memesan slot baru). */
+  function slotOf(a) { return a.slot === null || a.slot === undefined || a.slot === '' ? null : Number(a.slot); }
 
   function owns(ctx, a) { return a && a.user_id === ctx.userId && a.school_id === ctx.schoolId; }
 
@@ -225,7 +230,7 @@ var ExamEngine = (function () {
   // ---------- penilaian ----------
 
   /**
-   * Nilai dan tutup attempt dengan dua appendRow tanpa kunci (Answers lalu Results).
+   * Nilai dan tutup attempt: baris Answers lalu Results di slot attempt, tanpa kunci.
    * jawaban null = pakai auto-save terakhir. Mengembalikan baris Results yang berlaku.
    */
   function finalize(attempt, jawaban, pindahTab, status) {
@@ -248,14 +253,14 @@ var ExamEngine = (function () {
 
     Repos.answers().insert(SYSTEM, {
       attempt_id: attempt.attempt_id, test_id: attempt.test_id, school_id: attempt.school_id, jawaban: final, skor: skor
-    });
+    }, slotOf(attempt));
     var result = Repos.results().insert(SYSTEM, {
       attempt_id: attempt.attempt_id, test_id: attempt.test_id, school_id: attempt.school_id, user_id: attempt.user_id,
       status: status, selesai: Utils.nowIso(),
       jumlah_pindah_tab: Math.max(Number(pindahTab) || 0, Number(attempt.jumlah_pindah_tab) || 0),
       skor_otomatis: score.skor_otomatis, skor_uraian: null, nilai_akhir: score.nilai,
       status_koreksi: score.perlu_koreksi ? 'MENUNGGU' : 'SELESAI'
-    });
+    }, slotOf(attempt));
     var o = {};
     o[resultKey(attempt.attempt_id)] = result;
     o[cacheKey(attempt.attempt_id)] = applyResult(attempt, result);
@@ -314,11 +319,13 @@ var ExamEngine = (function () {
     if (!TokenService.verify(ctx, test.test_id, payload.token)) Utils.fail('BAD_TOKEN', 'Token salah atau sudah tidak berlaku.');
 
     var batas = Math.min(nowMs() + test.durasi_menit * 60000, Date.parse(test.selesai));
+    var order = buildOrder(test, id);
+    var slot = Repos.attempts().reserve(1);
     var created = Repos.attempts().insert(ctx, {
       attempt_id: id, test_id: test.test_id, user_id: ctx.userId, mulai: Utils.nowIso(), batas_waktu: new Date(batas).toISOString(),
-      selesai: '', status: 'PROGRESS', urutan_soal: buildOrder(test, id),
-      ip_ua: String(payload.user_agent || '').slice(0, 300), jumlah_pindah_tab: 0
-    });
+      selesai: '', status: 'PROGRESS', urutan_soal: order,
+      ip_ua: String(payload.user_agent || '').slice(0, 300), jumlah_pindah_tab: 0, slot: slot
+    }, slot);
     cacheAttempt(created);
     return packageFor(created, test, null);
   }
@@ -361,7 +368,7 @@ var ExamEngine = (function () {
     Repos.answerBatches().insert(SYSTEM, {
       attempt_id: a.attempt_id, school_id: a.school_id, seq: seq, jawaban_json: jawaban, jumlah_pindah_tab: tab,
       client_ts: String(clientTs || '').slice(0, 40), server_ts: now
-    });
+    }, slotOf(a));
   }
 
   /**
@@ -399,13 +406,18 @@ var ExamEngine = (function () {
     return done;
   }
 
-  /** Salin status dari Results ke Attempts dengan satu kunci (trigger berkala). */
+  /**
+   * Salin status dari Results ke Attempts dengan satu kunci (trigger berkala). Paling banyak
+   * SYNC_MAX baris per jalan, supaya kunci tidak lama tertahan (login dan mulai tes ikut memakainya
+   * untuk memesan slot). Sisanya disalin pada jalan berikutnya; pembaca memakai Results lebih dulu.
+   */
   function syncClosed() {
     var results = closedResults();
     var patches = {};
+    var n = 0;
     uniqueAttempts(Repos.attempts().findMany(SYSTEM, { status: 'PROGRESS' })).forEach(function (a) {
       var r = results[a.attempt_id];
-      if (r) patches[a.attempt_id] = { status: r.status, selesai: r.selesai, jumlah_pindah_tab: applyResult(a, r).jumlah_pindah_tab };
+      if (r && n < SYNC_MAX) { n++; patches[a.attempt_id] = { status: r.status, selesai: r.selesai, jumlah_pindah_tab: applyResult(a, r).jumlah_pindah_tab }; }
     });
     return Repos.attempts().updateMany(SYSTEM, patches);
   }
@@ -446,7 +458,7 @@ var ExamEngine = (function () {
   return {
     SAVE_GRACE_SECONDS: SAVE_GRACE_SECONDS,
     available: available, start: start, save: save, submit: submit, finalizeExpired: finalizeExpired, syncClosed: syncClosed,
-    progressOf: progressOf, closedResults: closedResults, applyResult: applyResult, uniqueAttempts: uniqueAttempts,
+    attemptIdFor: attemptIdFor, progressOf: progressOf, closedResults: closedResults, applyResult: applyResult, uniqueAttempts: uniqueAttempts,
     extend: extend, forceSubmit: forceSubmit
   };
 })();
