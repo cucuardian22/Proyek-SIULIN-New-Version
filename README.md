@@ -107,7 +107,7 @@ npm test
 1. Pasang clasp: `npm install -g @google/clasp`, lalu `clasp login` dengan akun pemilik klaster.
 2. Buat project baru di [script.google.com](https://script.google.com) (New project, beri nama mis. "SIULIN Klaster A"), salin Script ID dari Project Settings, lalu salin `.clasp.json.example` menjadi `.clasp.json` dan isi `scriptId`. Jangan pakai `clasp create`: perintah itu menimpa `src/appsscript.json` dengan manifest kosong.
 3. `clasp push -f`.
-4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL spreadsheet MASTER dan ATTEMPT.
+4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL empat spreadsheet: MASTER, ATTEMPT, JAWABAN, dan HASIL.
 5. Di Project Settings > Script Properties, isi `SETUP_ADMIN_USER` dan `SETUP_ADMIN_PASSWORD`, lalu jalankan `setupSuperAdmin`. Catat waktu hash di log; bila di atas 300 ms, turunkan `Config.HASH_ITERATIONS`.
 6. Jalankan `setupTriggers` agar ujian yang waktunya habis tetap dikumpulkan.
 7. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.

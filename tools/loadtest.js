@@ -94,6 +94,18 @@ async function retry(fn) {
   }
 }
 
+/** Submit seperti Exam.html: diulang otomatis dengan jeda makin panjang bila server penuh. */
+const SUBMIT_RETRY_MS = [3000, 6000, 12000, 20000, 30000];
+async function retrySubmit(fn) {
+  for (let i = 0; ; i++) {
+    try { return await fn(); } catch (e) {
+      if (!['NETWORK', 'BUSY', 'INTERNAL', 'TIMEOUT'].includes(e.code) && !/^HTTP_/.test(e.code)) throw e;
+      if (i >= SUBMIT_RETRY_MS.length) throw e;
+      await sleep(jitter(SUBMIT_RETRY_MS[i]));
+    }
+  }
+}
+
 async function student(client, opts, n, state) {
   const username = opts.prefix + String(n).padStart(3, '0');
   await sleep(Math.random() * opts.ramp * 1000);
@@ -117,7 +129,7 @@ async function student(client, opts, n, state) {
       // Browser tidak mengulang auto-save yang gagal; simpanan berikutnya membawa semua jawaban.
       await client.call('attempt.save', sid, { attempt_ref: pkg.attempt_id, seq, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }).catch(() => {});
     }
-    await retry(() => client.call('attempt.submit', sid, { attempt_ref: pkg.attempt_id, seq: seq + 1, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }));
+    await retrySubmit(() => client.call('attempt.submit', sid, { attempt_ref: pkg.attempt_id, seq: seq + 1, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }));
     state.submitted++;
   } catch (e) {
     state.failed.push(username + ': ' + e.message);

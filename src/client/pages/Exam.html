@@ -105,12 +105,30 @@
     deadline = next;
   }
 
+  // Saat waktu habis semua siswa mengumpulkan pada detik yang sama. Kiriman disebar acak dalam
+  // AUTO_SPREAD_MS (server masih menerima sampai 120 detik setelah batas), dan kiriman yang gagal
+  // karena server penuh diulang otomatis dengan jeda yang makin panjang.
+  var AUTO_SPREAD_MS = 30000;
+  var SUBMIT_RETRY_MS = [3000, 6000, 12000, 20000, 30000];
+  var TRANSIENT = { NETWORK: true, BUSY: true, INTERNAL: true };
+
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function sendSubmit(payload, attempt) {
+    return SIULIN.callApi('attempt.submit', payload).catch(function (e) {
+      if (!TRANSIENT[e.code] || attempt >= SUBMIT_RETRY_MS.length) throw e;
+      return wait(SUBMIT_RETRY_MS[attempt] * (0.7 + Math.random() * 0.6)).then(function () { return sendSubmit(payload, attempt + 1); });
+    });
+  }
+
   function submit(auto) {
     if (finished) return;
     finished = true;
     stopTimers();
     SIULIN.loading(true);
-    SIULIN.callApi('attempt.submit', { attempt_ref: pkg.attempt_id, seq: st.seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString(), auto: !!auto })
+    var payload = { attempt_ref: pkg.attempt_id, seq: st.seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString(), auto: !!auto };
+    wait(auto ? Math.random() * AUTO_SPREAD_MS : 0)
+      .then(function () { return sendSubmit(payload, 0); })
       .then(function (r) {
         if (r.status === 'PROGRESS') {
           // Waktu sudah ditambah pengawas: lanjut mengerjakan.

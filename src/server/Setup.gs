@@ -1,7 +1,7 @@
 /**
  * Jalankan dari editor Apps Script (bukan dari web app).
  *
- * 1. setupSiulin()       -> membuat spreadsheet MASTER dan ATTEMPT (bila belum ada),
+ * 1. setupSiulin()       -> membuat spreadsheet MASTER, ATTEMPT, JAWABAN, HASIL (bila belum ada),
  *                           semua sheet, header, dan format kolom teks.
  * 2. Isi Script Properties SETUP_ADMIN_USER dan SETUP_ADMIN_PASSWORD, lalu
  *    setupSuperAdmin()   -> membuat akun SUPER_ADMIN (login dengan kode sekolah PUSAT).
@@ -17,7 +17,7 @@
  * lihat bagian "Uji beban" di README.
  */
 function setupSiulin() {
-  ['MASTER', 'ATTEMPT'].forEach(function (db) {
+  Schema.dbs().forEach(function (db) {
     var ss = openOrCreateSpreadsheet_(db);
     Schema.names().forEach(function (name) {
       var t = Schema.get(name);

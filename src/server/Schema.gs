@@ -10,6 +10,9 @@
  *   'global'  -> tidak terikat sekolah
  */
 var Schema = (function () {
+  // Spreadsheet (db): MASTER (data induk + sesi), ATTEMPT (Attempts), JAWABAN (auto-save + jawaban akhir),
+  // HASIL (Results). Dipisah karena Sheets memproses penulisan ke satu spreadsheet secara berurutan:
+  // login, mulai, auto-save, dan submit yang serentak tidak antre di spreadsheet yang sama.
   var STD = [['created_at', 'string'], ['updated_at', 'string'], ['deleted_at', 'string']];
 
   function table(db, id, scope, cols, opts) {
@@ -82,7 +85,7 @@ var Schema = (function () {
       ['ip_ua', 'string'], ['jumlah_pindah_tab', 'number']
     ]),
 
-    AnswerBatches: table('ATTEMPT', 'batch_id', 'school', [
+    AnswerBatches: table('JAWABAN', 'batch_id', 'school', [
       ['batch_id', 'string'], ['attempt_id', 'string'], ['school_id', 'string'],
       ['seq', 'number'], ['jawaban_json', 'json'], ['jumlah_pindah_tab', 'number'],
       ['client_ts', 'string'], ['server_ts', 'string']
@@ -91,7 +94,7 @@ var Schema = (function () {
     // Jawaban akhir satu baris per attempt (satu appendRow saat submit, tanpa kunci).
     // jawaban = { question_id: jawaban }, skor = { question_id: skor }.
     // PostgreSQL: dipecah jadi tabel answers (attempt_id, question_id) saat migrasi.
-    Answers: table('ATTEMPT', 'attempt_id', 'school', [
+    Answers: table('JAWABAN', 'attempt_id', 'school', [
       ['attempt_id', 'string'], ['test_id', 'string'], ['school_id', 'string'],
       ['jawaban', 'json'], ['skor', 'json']
     ]),
@@ -99,7 +102,7 @@ var Schema = (function () {
     // Baris Results = attempt sudah ditutup. status/selesai/jumlah_pindah_tab di sini yang berlaku;
     // kolom yang sama di Attempts disalin oleh trigger berkala. Bila ada dua baris (submit ganda
     // bersamaan), yang paling awal yang berlaku.
-    Results: table('ATTEMPT', 'attempt_id', 'school', [
+    Results: table('HASIL', 'attempt_id', 'school', [
       ['attempt_id', 'string'], ['test_id', 'string'], ['school_id', 'string'],
       ['user_id', 'string'], ['status', 'string'], ['selesai', 'string'],
       ['jumlah_pindah_tab', 'number'], ['skor_otomatis', 'number'], ['skor_uraian', 'number'],
@@ -115,7 +118,14 @@ var Schema = (function () {
 
   function names() { return Object.keys(TABLES); }
 
-  return { get: get, names: names, TABLES: TABLES };
+  /** Daftar spreadsheet sesuai urutan kemunculan di TABLES. */
+  function dbs() {
+    var out = [];
+    names().forEach(function (n) { if (out.indexOf(TABLES[n].db) < 0) out.push(TABLES[n].db); });
+    return out;
+  }
+
+  return { get: get, names: names, dbs: dbs, TABLES: TABLES };
 })();
 
 if (typeof module !== 'undefined') module.exports = Schema;

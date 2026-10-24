@@ -1,6 +1,6 @@
 /**
  * Konstanta aplikasi. ID spreadsheet tidak ditulis di sini, tetapi disimpan
- * di Script Properties (MASTER_ID, ATTEMPT_ID) oleh Setup.gs, supaya satu kode
+ * di Script Properties (MASTER_ID, ATTEMPT_ID, JAWABAN_ID, HASIL_ID) oleh Setup.gs, supaya satu kode
  * yang sama bisa di-deploy ke banyak klaster.
  */
 var Config = {
