@@ -63,7 +63,9 @@ function createClient(opts) {
       code = e.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK';
     }
     if (res && !res.ok) code = (res.error && res.error.code) || 'ERROR';
-    calls.push({ route, ms: Date.now() - started, ok: !code, code, at: started });
+    const entry = { route, ms: Date.now() - started, ok: !code, code, at: started };
+    if (res && res.error && res.error.detail) entry.detail = res.error.detail;
+    calls.push(entry);
     if (code) {
       const err = new Error(route + ' gagal: ' + code + (res && res.error ? ' ' + res.error.message : ''));
       err.code = code;
@@ -209,6 +211,12 @@ async function main() {
     String(r.p95).padStart(9) + String(r.maks).padStart(10) + '  ' + JSON.stringify(r.kode_gagal)));
   console.log('\nSiswa mulai ' + state.started + '/' + opts.students + ', kumpul ' + state.submitted + '/' + opts.students +
     '. Panggilan ' + total + ', gagal ' + failed + ' (' + (total ? (failed / total * 100).toFixed(2) : 0) + '%). Puncak ' + peakPerMinute(client.calls) + ' panggilan/menit.');
+  const details = {};
+  client.calls.filter((c) => c.detail).forEach((c) => { const k = c.route + ': ' + c.detail; details[k] = (details[k] || 0) + 1; });
+  if (Object.keys(details).length) {
+    console.log('\nPesan galat server (INTERNAL):');
+    Object.keys(details).sort((a, b) => details[b] - details[a]).slice(0, 10).forEach((k) => console.log('  ' + details[k] + 'x  ' + k));
+  }
   if (state.failed.length) console.log('Siswa/pengawas gagal (' + state.failed.length + '):\n  ' + state.failed.slice(0, 20).join('\n  '));
 
   const save = rows.find((r) => r.route === 'attempt.save');

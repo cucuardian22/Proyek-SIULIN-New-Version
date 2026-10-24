@@ -45,3 +45,28 @@ test('handlePost mati bila LOADTEST_ENABLED bukan true, dan hanya rute ujian', (
   assert.equal(post({ route: 'result.list', payload: {} }).error.code, 'NOT_FOUND');
   assert.equal(LoadTest.handlePost('bukan json').error.code, 'INVALID_INPUT');
 });
+
+test('galat INTERNAL membawa pesan hanya di mode uji beban', () => {
+  for (const enabled of [true, false]) {
+    setup(enabled);
+    const info = LoadTest.prepare({ students: 1, password: 'ujibeban123' });
+    const sid = Auth.login({ kode_sekolah: 'UJIBEBAN', username: 'ub001', password: 'ujibeban123' }).session_id;
+    const original = ExamEngine.start;
+    ExamEngine.start = () => { throw new Error('Service Spreadsheets timed out'); };
+    try {
+      const r = Api.handle('attempt.start', sid, { test_ref: info.test_id, token: info.token });
+      assert.equal(r.error.code, 'INTERNAL');
+      assert.equal(r.error.detail, enabled ? 'Service Spreadsheets timed out' : undefined);
+    } finally {
+      ExamEngine.start = original;
+    }
+  }
+});
+
+test('cache tabel yang potongannya tidak cocok dibaca ulang dari sheet', () => {
+  const platform = setup();
+  LoadTest.prepare({ students: 2, password: 'ujibeban123' });
+  Repos.users().findMany(Auth.SYSTEM); // isi cache
+  platform.cache().put('tbl:Users:0', '[{"rusak":', 600);
+  assert.equal(Repos.users().findMany(Auth.SYSTEM, { role: 'SISWA' }).length, 2);
+});

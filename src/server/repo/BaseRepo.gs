@@ -86,7 +86,8 @@ var BaseRepo = (function () {
       if (parts[keys[j]] === undefined) return null;
       text += parts[keys[j]];
     }
-    return JSON.parse(text);
+    // Potongan dari dua versi berbeda (cache sedang ditulis ulang) tidak bisa di-parse: baca sheet saja.
+    try { return JSON.parse(text); } catch (e) { return null; }
   };
 
   BaseRepo.prototype._writeCache = function (objs) {
