@@ -1,0 +1,57 @@
+<section id="page-login" hidden>
+  <div class="center">
+    <form id="login-form" class="card login" autocomplete="on" novalidate>
+      <h1>SIULIN</h1>
+      <p class="muted">Sistem Ujian Online</p>
+      <label class="field"><span>Kode sekolah</span>
+        <input name="kode_sekolah" autocomplete="organization" placeholder="Contoh: ESPEGE" required></label>
+      <label class="field"><span>Username</span>
+        <input name="username" autocomplete="username" required></label>
+      <label class="field"><span>Password</span>
+        <input name="password" type="password" autocomplete="current-password" required></label>
+      <p id="login-error" class="error" role="alert"></p>
+      <button class="btn btn-primary" type="submit">Masuk</button>
+    </form>
+  </div>
+</section>
+<script>
+(function () {
+  var REMEMBER_KEY = 'siulin.kode_sekolah';
+  var form = document.getElementById('login-form');
+  var errorEl = document.getElementById('login-error');
+
+  SIULIN.page('login', {
+    el: 'page-login',
+    onShow: function () {
+      try { form.kode_sekolah.value = localStorage.getItem(REMEMBER_KEY) || ''; } catch (e) {}
+      form.password.value = '';
+      errorEl.textContent = '';
+      (form.kode_sekolah.value ? form.username : form.kode_sekolah).focus();
+    }
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var payload = {
+      kode_sekolah: form.kode_sekolah.value.trim(),
+      username: form.username.value.trim(),
+      password: form.password.value
+    };
+    if (!payload.kode_sekolah || !payload.username || !payload.password) {
+      errorEl.textContent = 'Semua kolom wajib diisi.';
+      return;
+    }
+    var btn = form.querySelector('button');
+    btn.disabled = true;
+    errorEl.textContent = '';
+    SIULIN.callApi('auth.login', payload)
+      .then(function (data) {
+        try { localStorage.setItem(REMEMBER_KEY, payload.kode_sekolah.toUpperCase()); } catch (e) {}
+        SIULIN.saveSession(data.session_id, data.user);
+        SIULIN.show('dashboard');
+      })
+      .catch(function (err) { errorEl.textContent = err.message; })
+      .then(function () { btn.disabled = false; });
+  });
+})();
+</script>

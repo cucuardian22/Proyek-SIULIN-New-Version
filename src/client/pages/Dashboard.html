@@ -1,0 +1,54 @@
+<section id="page-dashboard" hidden>
+  <div class="layout">
+    <nav class="sidebar" aria-label="Menu utama">
+      <div class="brand">SIULIN</div>
+      <div id="menu"></div>
+    </nav>
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h1 id="dash-greeting"></h1>
+          <div class="muted" id="dash-school"></div>
+        </div>
+        <button class="btn" id="btn-logout" type="button">Keluar</button>
+      </div>
+      <div class="card">
+        <h2>Beranda</h2>
+        <p class="muted">Menu yang belum aktif akan dibuka bertahap sesuai roadmap Tahap 1.</p>
+      </div>
+    </main>
+  </div>
+</section>
+<script>
+(function () {
+  // Menu per peran. "soon" = belum dibangun pada tahap ini.
+  var MENU = {
+    SUPER_ADMIN: ['Beranda', 'Sekolah', 'Topik ujian', 'Bank soal global'],
+    ADMIN:       ['Beranda', 'Pengguna', 'Ujian & mapel', 'Bank soal', 'Jadwal tes', 'Token', 'Rekap nilai'],
+    GURU:        ['Beranda', 'Bank soal', 'Jadwal tes', 'Token', 'Rekap nilai'],
+    PENGAWAS:    ['Beranda', 'Token', 'Monitoring'],
+    SISWA:       ['Beranda', 'Ujian saya']
+  };
+
+  SIULIN.page('dashboard', {
+    el: 'page-dashboard',
+    onShow: function () {
+      var u = SIULIN.state.user || {};
+      document.getElementById('dash-greeting').textContent = 'Halo, ' + (u.nama || u.username || '');
+      document.getElementById('dash-school').innerHTML =
+        SIULIN.esc(u.nama_sekolah) + ' &middot; <span class="badge">' + SIULIN.esc(u.role) + '</span>';
+      document.getElementById('menu').innerHTML = (MENU[u.role] || ['Beranda']).map(function (label, i) {
+        return '<a href="#" class="' + (i === 0 ? 'active' : 'soon') + '">' + SIULIN.esc(label) + '</a>';
+      }).join('');
+    }
+  });
+
+  document.getElementById('btn-logout').addEventListener('click', function () {
+    SIULIN.loading(true);
+    SIULIN.callApi('auth.logout').catch(function () {}).then(function () {
+      SIULIN.loading(false);
+      SIULIN.clearSession();
+    });
+  });
+})();
+</script>

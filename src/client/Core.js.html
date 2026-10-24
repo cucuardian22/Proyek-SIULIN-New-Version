@@ -1,0 +1,92 @@
+<script>
+/**
+ * Inti client: pemanggilan API, sesi, dan perpindahan halaman.
+ * Semua panggilan server lewat callApi(); di Fase 2 isinya cukup diganti
+ * fetch('/api/' + route), halaman lain tidak perlu berubah.
+ */
+var SIULIN = (function () {
+  var SESSION_KEY = 'siulin.session';
+  var pages = {};
+  var state = { session: null, user: null };
+
+  function callApi(route, payload) {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.ok) return resolve(res.data);
+          var err = (res && res.error) || { code: 'INTERNAL', message: 'Respons server tidak dikenal.' };
+          if (err.code === 'UNAUTHENTICATED' && route !== 'auth.login') clearSession();
+          reject(err);
+        })
+        .withFailureHandler(function (e) {
+          reject({ code: 'NETWORK', message: 'Tidak dapat terhubung ke server. Periksa koneksi lalu coba lagi.', cause: String(e) });
+        })
+        .apiCall(route, state.session, payload || {});
+    });
+  }
+
+  function saveSession(sessionId, user) {
+    state.session = sessionId;
+    state.user = user;
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify({ id: sessionId, user: user })); } catch (e) {}
+  }
+
+  function clearSession() {
+    state.session = null;
+    state.user = null;
+    try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+    show('login');
+  }
+
+  function restoreSession() {
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+      if (saved && saved.id) { state.session = saved.id; state.user = saved.user; }
+    } catch (e) {}
+  }
+
+  /** Daftarkan halaman: { el: 'page-id', onShow: fn } */
+  function page(name, def) { pages[name] = def; }
+
+  function show(name, params) {
+    Object.keys(pages).forEach(function (n) {
+      document.getElementById(pages[n].el).hidden = n !== name;
+    });
+    if (pages[name] && pages[name].onShow) pages[name].onShow(params || {});
+  }
+
+  function loading(on) { document.getElementById('loading').hidden = !on; }
+
+  var toastTimer = null;
+  function toast(message) {
+    var el = document.getElementById('toast');
+    el.textContent = message;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 4000);
+  }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function start() {
+    restoreSession();
+    if (!state.session) return show('login');
+    loading(true);
+    callApi('auth.me')
+      .then(function (data) { state.user = data.user; show('dashboard'); })
+      .catch(function () { clearSession(); })
+      .then(function () { loading(false); });
+  }
+
+  return {
+    state: state, callApi: callApi, saveSession: saveSession, clearSession: clearSession,
+    page: page, show: show, loading: loading, toast: toast, esc: esc, start: start
+  };
+})();
+
+document.addEventListener('DOMContentLoaded', SIULIN.start);
+</script>

@@ -1,0 +1,81 @@
+# SIULIN - Sistem Ujian Online
+
+Sistem ujian online multi-sekolah. Fase 1 berjalan di Google Apps Script + Google Sheets dan dirancang agar bisa dipindahkan ke Node.js + PostgreSQL (Fase 2) dengan hanya menulis ulang lapisan `repo/`.
+
+## Status
+
+Tahap 1, bagian fondasi:
+
+- Skema 12 sheet (`src/server/Schema.gs`) dan skrip pembuatnya (`Setup.gs`)
+- Repository generik dengan isolasi `school_id` dari sesi (`repo/BaseRepo.gs`)
+- Login, sesi, batas percobaan login, RBAC 5 peran, satu pintu API (`Auth.gs`, `Rbac.gs`, `Api.gs`)
+- Penilaian otomatis PG, PGK, PGBS, PGST (`service/ScoringService.gs`)
+- Halaman Login dan Dashboard
+
+Berikutnya: pengguna & import, bank soal & import, jadwal tes & token, mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
+
+## Struktur
+
+```
+src/
+  appsscript.json
+  server/
+    Code.gs        doGet(), include()
+    Config.gs      konstanta
+    Schema.gs      definisi semua sheet dan tipe kolom
+    Utils.gs       AppError, waktu ISO UTC, UUID
+    Auth.gs        login, logout, sesi, hash password
+    Rbac.gs        peta izin per peran
+    Api.gs         apiCall(route, sessionId, payload): satu pintu untuk client
+    Setup.gs       setupSiulin(), setupSuperAdmin() (dijalankan dari editor)
+    repo/          SATU-SATUNYA kode yang menyentuh layanan Google
+      GasPlatform.gs   adapter SpreadsheetApp/CacheService/LockService/Properties
+      BaseRepo.gs      CRUD generik + cache + isolasi sekolah
+      Repos.gs, SchoolRepo.gs, UserRepo.gs
+    service/       logika bisnis murni
+      ScoringService.gs
+  client/
+    Index.html, Style.html, Core.js.html (callApi, sesi, navigasi)
+    pages/Login.html, pages/Dashboard.html
+tests/             unit test Node.js (tidak di-push ke Apps Script)
+```
+
+## Aturan arsitektur
+
+1. Hanya file di `server/repo/` yang boleh memanggil `SpreadsheetApp`, `CacheService`, `LockService`, `PropertiesService`. Service dan Api memakai `Repos` dan `Platform`.
+2. Semua panggilan client lewat `SIULIN.callApi(route, payload)` di `Core.js.html`, yang memanggil `apiCall` di server.
+3. `apiCall` memvalidasi sesi dan izin peran sebelum handler dipanggil, membuang `school_id` dari payload client, lalu memberi handler `ctx = { userId, schoolId, role }` dari sesi server.
+4. `BaseRepo` menolak akses tanpa `ctx`, menyuntikkan `school_id` sesi ke setiap filter dan baris baru, dan mencegah perubahan baris milik sekolah lain.
+5. Semua sel disimpan sebagai teks; tipe (`number`, `bool`, `json`) dikonversi oleh `BaseRepo` sesuai `Schema.gs`. Waktu disimpan sebagai ISO 8601 UTC.
+6. Urutan kolom sheet harus sama dengan `Schema.gs`. `setupSiulin()` menolak berjalan bila sheet berisi data dengan header berbeda.
+
+## Rumus penilaian
+
+| Tipe | Skor |
+| --- | --- |
+| PG | bobot bila jawaban sama dengan kunci, selain itu 0 |
+| PGK | max(0, (benar dipilih - salah dipilih) / jumlah kunci) x bobot |
+| PGBS, PGST | (pernyataan dijawab benar / jumlah pernyataan) x bobot |
+| ISIAN, URAIAN | dinilai manual (Tahap 3) |
+
+Skor dibulatkan dua desimal. Contoh PGK: kunci [A, C], bobot 4. Jawaban [A] = 2, [A, C] = 4, [A, B] = 0, [A, B, C, D] = 0.
+
+## Menjalankan test
+
+Butuh Node.js 18 atau lebih baru, tanpa dependensi tambahan.
+
+```
+npm test
+```
+
+## Deploy satu klaster
+
+1. Pasang clasp: `npm install -g @google/clasp`, lalu `clasp login` dengan akun pemilik klaster.
+2. Buat project Apps Script baru (`clasp create --type standalone --title "SIULIN Klaster A" --rootDir src`), atau salin `.clasp.json.example` menjadi `.clasp.json` dan isi `scriptId`.
+3. `clasp push`.
+4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL spreadsheet MASTER dan ATTEMPT.
+5. Di Project Settings > Script Properties, isi `SETUP_ADMIN_USER` dan `SETUP_ADMIN_PASSWORD`, lalu jalankan `setupSuperAdmin`. Catat waktu hash di log; bila di atas 300 ms, turunkan `Config.HASH_ITERATIONS`.
+6. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
+7. Buka URL web app, login dengan kode sekolah `PUSAT`.
+
+Setiap klaster memakai akun Google pemilik yang berbeda, karena batas 30 eksekusi serentak berlaku per akun.

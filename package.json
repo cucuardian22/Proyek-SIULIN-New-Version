@@ -1,0 +1,10 @@
+{
+  "name": "siulin",
+  "private": true,
+  "description": "SIULIN - Sistem Ujian Online multi-sekolah (Fase 1: Google Apps Script + Sheets)",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "push": "clasp push",
+    "deploy": "clasp deploy"
+  }
+}
