@@ -61,7 +61,11 @@ var Api = (function () {
     'attempt.list':   { permission: 'exam.take', handler: function (ctx) { return ExamEngine.available(ctx); } },
     'attempt.start':  { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.start(ctx, p); } },
     'attempt.save':   { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.save(ctx, p); } },
-    'attempt.submit': { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.submit(ctx, p); } }
+    'attempt.submit': { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.submit(ctx, p); } },
+
+    'result.list':     { permission: 'result.view', handler: function (ctx, p) { return ResultService.list(ctx, p); } },
+    'result.detail':   { permission: 'result.view', handler: function (ctx, p) { return ResultService.detail(ctx, p); } },
+    'result.analysis': { permission: 'result.view', handler: function (ctx, p) { return ResultService.analysis(ctx, p); } }
   };
 
   function sanitize(payload) {

@@ -1,0 +1,180 @@
+<script>
+// Rekap nilai per tes (ADMIN, GURU): daftar peserta, detail jawaban, analisis butir, unduh CSV.
+SIULIN.view('results', {
+  title: 'Rekap nilai',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    var STATUS_LABEL = { BELUM: 'Belum mengerjakan', MENGERJAKAN: 'Mengerjakan', SELESAI: 'Selesai', WAKTU_HABIS: 'Waktu habis' };
+    var tests = [], data = null, tab = 'rows';
+
+    el.innerHTML =
+      '<div class="toolbar"><label class="field field-wide"><span>Tes</span><select id="rs-test"></select></label>' +
+      '<label class="field"><span>Kelas</span><select id="rs-kelas"><option value="">Semua</option></select></label>' +
+      '<div class="spacer"></div><button class="btn" type="button" id="rs-refresh">Muat ulang</button> ' +
+      '<button class="btn btn-blue" type="button" id="rs-csv">Unduh CSV</button></div>' +
+      '<div id="rs-summary" class="stat-grid"></div>' +
+      '<div class="tabs" role="tablist"><button type="button" class="tab active" data-tab="rows">Nilai siswa</button>' +
+      '<button type="button" class="tab" data-tab="analysis">Analisis butir soal</button></div>' +
+      '<div id="rs-content"><div class="card empty">Memuat...</div></div>' +
+      '<div id="rs-detail"></div>';
+    var $ = function (s) { return el.querySelector(s); };
+
+    function num(v) { return v === null || v === undefined ? '-' : String(v).replace('.', ','); }
+    function csvNum(v) { return v === null || v === undefined ? '' : num(v); }
+
+    /** Jawaban/kunci dalam bentuk singkat: B | A, C | 1: B, 2: S | teks. */
+    function fmtAnswer(v) {
+      if (v === null || v === undefined || v === '') return '-';
+      if (Array.isArray(v)) return v.length ? v.join(', ') : '-';
+      if (typeof v === 'object') {
+        var keys = Object.keys(v);
+        return keys.length ? keys.map(function (k) { return k + ': ' + v[k]; }).join(', ') : '-';
+      }
+      return String(v);
+    }
+
+    function kelasFilter() { return $('#rs-kelas').value; }
+
+    function visibleRows() {
+      var k = kelasFilter();
+      return data.rows.filter(function (r) { return !k || String(r.kelas).toUpperCase() === k; });
+    }
+
+    function renderSummary() {
+      var s = data.summary;
+      var stat = function (label, value, note) {
+        return '<div class="card stat"><div class="muted">' + esc(label) + '</div><div class="stat-value">' + esc(value) + '</div>' +
+          (note ? '<div class="muted">' + esc(note) + '</div>' : '') + '</div>';
+      };
+      $('#rs-summary').innerHTML =
+        stat('Selesai', s.selesai + ' / ' + s.peserta, s.mengerjakan ? s.mengerjakan + ' sedang mengerjakan' : s.belum + ' belum mengerjakan') +
+        stat('Rata-rata', num(s.rata_rata), s.selesai ? 'tertinggi ' + num(s.tertinggi) + ', terendah ' + num(s.terendah) : '') +
+        stat('Tuntas (KKM ' + num(data.test.kkm) + ')', s.tuntas + ' siswa', s.selesai ? (s.selesai - s.tuntas) + ' belum tuntas' : '') +
+        (s.menunggu_koreksi ? stat('Menunggu koreksi uraian', s.menunggu_koreksi + ' siswa', 'nilai sementara tanpa uraian') : '');
+    }
+
+    function renderRows() {
+      var rows = visibleRows();
+      $('#rs-content').innerHTML = '<div class="table-wrap"><table><thead><tr><th>No</th><th>Siswa</th><th>Kelas</th><th>Status</th>' +
+        '<th>Nilai</th><th>Ketuntasan</th><th>Pindah tab</th><th></th></tr></thead><tbody>' +
+        (rows.length ? rows.map(function (r, i) {
+          return '<tr><td>' + (i + 1) + '</td><td><strong>' + esc(r.nama) + '</strong><div class="muted">' + esc(r.username) + '</div></td>' +
+            '<td>' + esc(r.kelas) + '</td>' +
+            '<td class="rs-' + r.status + '">' + STATUS_LABEL[r.status] + (r.selesai ? '<div class="muted">' + esc(SIULIN.fmtTime(r.selesai)) + '</div>' : '') + '</td>' +
+            '<td><strong>' + num(r.nilai_akhir) + '</strong>' + (r.status_koreksi === 'MENUNGGU' ? '<div class="muted">menunggu koreksi</div>' : '') + '</td>' +
+            '<td>' + (r.tuntas === null ? '-' : r.tuntas ? '<span class="status-AKTIF">Tuntas</span>' : '<span class="rs-gagal">Belum tuntas</span>') + '</td>' +
+            '<td>' + (r.attempt_id ? r.jumlah_pindah_tab : '-') + '</td>' +
+            '<td class="actions">' + (r.nilai_akhir !== null ? '<button class="btn btn-sm" type="button" data-attempt="' + esc(r.attempt_id) + '">Jawaban</button>' : '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="8" class="empty">Belum ada siswa peserta. Periksa kelas peserta tes dan kelas di data siswa.</td></tr>') +
+        '</tbody></table></div>';
+    }
+
+    function renderAnalysis(an) {
+      if (!an.items.length) { $('#rs-content').innerHTML = '<div class="card empty">Belum ada siswa yang selesai.</div>'; return; }
+      $('#rs-content').innerHTML = '<p class="muted">Dari ' + an.peserta + ' siswa yang selesai (semua kelas). Tingkat benar = rata-rata skor dibagi bobot; di bawah 30% berarti soal sulit, di atas 80% mudah.</p>' +
+        '<div class="table-wrap"><table><thead><tr><th>No</th><th>Soal</th><th>Tipe</th><th>Kunci</th><th>Dijawab</th><th>Tingkat benar</th><th>Sebaran pilihan</th></tr></thead><tbody>' +
+        an.items.map(function (q) {
+          var pct = q.tingkat_benar === null ? null : Math.round(q.tingkat_benar * 100);
+          var level = pct === null ? '' : pct < 30 ? 'sulit' : pct > 80 ? 'mudah' : 'sedang';
+          return '<tr><td>' + q.no + '</td><td class="rs-teks">' + esc(q.teks) + '</td><td>' + esc(q.tipe) + '</td><td>' + esc(fmtAnswer(q.kunci)) + '</td>' +
+            '<td>' + q.dijawab + ' / ' + q.peserta + '</td>' +
+            '<td>' + (pct === null ? '<span class="muted">dinilai manual</span>' : '<div class="bar"><span style="width:' + pct + '%"></span></div>' + pct + '% <span class="muted">' + level + '</span>') + '</td>' +
+            '<td>' + (q.pilihan ? q.pilihan.map(function (o) {
+              var right = (Array.isArray(q.kunci) ? q.kunci : [q.kunci]).map(String).indexOf(String(o.id)) >= 0;
+              return '<span class="' + (right ? 'status-AKTIF' : '') + '">' + esc(o.id) + ': ' + o.jumlah + '</span>';
+            }).join(' &middot; ') : '-') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+
+    function renderTab() {
+      el.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === tab); });
+      $('#rs-kelas').disabled = tab !== 'rows';
+      if (tab === 'rows') return renderRows();
+      $('#rs-content').innerHTML = '<div class="card empty">Memuat...</div>';
+      SIULIN.callApi('result.analysis', { test_ref: data.test.test_id }).then(renderAnalysis).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function load() {
+      var id = $('#rs-test').value;
+      if (!id) return;
+      $('#rs-detail').innerHTML = '';
+      SIULIN.callApi('result.list', { test_ref: id }).then(function (d) {
+        data = d;
+        var kelas = {};
+        d.rows.forEach(function (r) { if (r.kelas) kelas[String(r.kelas).toUpperCase()] = true; });
+        var chosen = kelasFilter();
+        $('#rs-kelas').innerHTML = '<option value="">Semua</option>' + Object.keys(kelas).sort().map(function (k) {
+          return '<option' + (k === chosen ? ' selected' : '') + '>' + esc(k) + '</option>';
+        }).join('');
+        renderSummary();
+        renderTab();
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function showDetail(attemptId) {
+      SIULIN.callApi('result.detail', { attempt_ref: attemptId }).then(function (d) {
+        var html = '<div class="card panel"><div class="q-head"><h2>' + esc(d.siswa.nama) + ' &middot; ' + esc(d.siswa.kelas) + '</h2><span class="spacer"></span>' +
+          '<button class="btn btn-sm" type="button" id="rs-close">Tutup</button></div>' +
+          '<p class="muted">Nilai ' + num(d.result && d.result.nilai_akhir) + ' &middot; ' + STATUS_LABEL[d.attempt.status] + ' ' + esc(SIULIN.fmtTime(d.attempt.selesai)) +
+          ' &middot; pindah tab ' + d.attempt.jumlah_pindah_tab + ' kali. Urutan soal sesuai yang dilihat siswa.</p>' +
+          d.items.map(function (q) {
+            var full = q.skor !== null && Number(q.skor) >= Number(q.bobot);
+            var cls = q.skor === null ? 'manual' : full ? 'benar' : Number(q.skor) > 0 ? 'sebagian' : 'salah';
+            var opsi = q.tipe === 'PG' || q.tipe === 'PGK' || q.tipe === 'PGBS' || q.tipe === 'PGST'
+              ? '<ol class="rs-opsi">' + q.opsi.map(function (o) { return '<li><strong>' + esc(o.id) + '.</strong> ' + esc(o.teks) + '</li>'; }).join('') + '</ol>' : '';
+            return '<div class="q-card rs-' + cls + '"><div class="q-head"><strong>' + q.no + '.</strong> <span class="badge">' + esc(q.tipe) + '</span>' +
+              '<span class="spacer"></span><strong>' + (q.skor === null ? 'dinilai manual' : num(q.skor) + ' / ' + num(q.bobot)) + '</strong></div>' +
+              '<div class="q-text">' + esc(q.teks) + '</div>' + opsi +
+              '<div class="grid-2"><div><span class="muted">Jawaban siswa</span><div>' + esc(fmtAnswer(q.jawaban)) + '</div></div>' +
+              '<div><span class="muted">Kunci</span><div>' + esc(fmtAnswer(q.kunci)) + '</div></div></div></div>';
+          }).join('') + '</div>';
+        $('#rs-detail').innerHTML = html;
+        $('#rs-detail').scrollIntoView({ behavior: 'smooth' });
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function exportCsv() {
+      if (!data) return;
+      var rows = [['No', 'Username', 'Nama', 'Kelas', 'Status', 'Mulai', 'Selesai', 'Skor', 'Nilai', 'Ketuntasan', 'Status koreksi', 'Pindah tab']];
+      visibleRows().forEach(function (r, i) {
+        rows.push([i + 1, r.username, r.nama, r.kelas, STATUS_LABEL[r.status], SIULIN.fmtTime(r.mulai), SIULIN.fmtTime(r.selesai),
+          csvNum(r.skor_otomatis), csvNum(r.nilai_akhir), r.tuntas === null ? '' : r.tuntas ? 'Tuntas' : 'Belum tuntas', r.status_koreksi, r.attempt_id ? r.jumlah_pindah_tab : '']);
+      });
+      var name = (data.test.judul + (kelasFilter() ? ' ' + kelasFilter() : '')).replace(/[^A-Za-z0-9]+/g, '_');
+      SIULIN.download('nilai_' + name + '.csv', SIULIN.toCsv(rows), 'text/csv');
+    }
+
+    $('#rs-test').addEventListener('change', function () { $('#rs-kelas').value = ''; load(); });
+    $('#rs-kelas').addEventListener('change', renderRows);
+    $('#rs-refresh').addEventListener('click', load);
+    $('#rs-csv').addEventListener('click', exportCsv);
+    el.querySelector('.tabs').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-tab]');
+      if (!b || !data) return;
+      tab = b.getAttribute('data-tab');
+      $('#rs-detail').innerHTML = '';
+      renderTab();
+    });
+    $('#rs-content').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-attempt]');
+      if (b) showDetail(b.getAttribute('data-attempt'));
+    });
+    $('#rs-detail').addEventListener('click', function (ev) {
+      if (ev.target.id === 'rs-close') $('#rs-detail').innerHTML = '';
+    });
+
+    // Tes yang sudah dimulai, terbaru dulu.
+    SIULIN.callApi('test.list', {}).then(function (d) {
+      tests = d.filter(function (t) { return t.status !== 'BELUM'; });
+      if (!tests.length) {
+        $('#rs-content').innerHTML = '<div class="card empty">Belum ada tes yang dimulai.</div>';
+        return;
+      }
+      $('#rs-test').innerHTML = tests.map(function (t) {
+        return '<option value="' + esc(t.test_id) + '">' + esc(t.judul + ' (' + (t.kelas_peserta || []).join(', ') + ', ' + SIULIN.fmtTime(t.mulai) + ')') + '</option>';
+      }).join('');
+      load();
+    }).catch(function (e) { SIULIN.toast(e.message); });
+  }
+});
+</script>

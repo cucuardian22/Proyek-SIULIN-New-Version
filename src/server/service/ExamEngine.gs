@@ -243,10 +243,15 @@ var ExamEngine = (function () {
     return { status: fresh.status, selesai: fresh.selesai };
   }
 
-  /** Dipanggil trigger berkala: kumpulkan attempt yang waktunya habis tanpa submit. */
-  function finalizeExpired() {
+  /**
+   * Dipanggil trigger berkala: kumpulkan attempt yang waktunya habis tanpa submit.
+   * testId opsional: hanya untuk satu tes (dipakai rekap nilai sebelum menampilkan hasil).
+   */
+  function finalizeExpired(testId) {
     var done = 0;
-    Repos.attempts().findMany(SYSTEM, { status: 'PROGRESS' }).forEach(function (a) {
+    var filter = { status: 'PROGRESS' };
+    if (testId) filter.test_id = testId;
+    Repos.attempts().findMany(SYSTEM, filter).forEach(function (a) {
       if (!expired(a)) return;
       try { finalize(SYSTEM, a, null, null, 'TIMEOUT'); done++; }
       catch (e) { Utils.log('error', 'finalize gagal', { attempt_id: a.attempt_id, error: String(e) }); }
