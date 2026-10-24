@@ -1,0 +1,144 @@
+<script>
+// Monitoring tes berjalan (PENGAWAS, GURU, ADMIN). Diperbarui otomatis tiap 30 detik selama halaman terbuka.
+SIULIN.view('monitoring', {
+  title: 'Monitoring',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    var REFRESH_MS = 30000;
+    var STATUS_LABEL = { BELUM: 'Belum mulai', MENGERJAKAN: 'Mengerjakan', SELESAI: 'Selesai', WAKTU_HABIS: 'Waktu habis' };
+    var timer = null, data = null, offset = 0;
+
+    el.innerHTML =
+      '<div class="toolbar"><label class="field field-wide"><span>Tes</span><select id="mo-test"></select></label>' +
+      '<label class="field"><span>Kelas</span><select id="mo-kelas"><option value="">Semua</option></select></label>' +
+      '<label class="field"><span>Tampilkan</span><select id="mo-filter"><option value="">Semua siswa</option>' +
+      '<option value="MENGERJAKAN">Sedang mengerjakan</option><option value="terputus">Mungkin terputus</option>' +
+      '<option value="BELUM">Belum mulai</option><option value="done">Sudah selesai</option></select></label>' +
+      '<div class="spacer"></div><button class="btn" type="button" id="mo-refresh">Muat ulang</button></div>' +
+      '<div id="mo-summary" class="stat-grid"></div>' +
+      '<p class="muted" id="mo-note"></p>' +
+      '<div id="mo-content"><div class="card empty">Memuat...</div></div>';
+    var $ = function (s) { return el.querySelector(s); };
+    var content = $('#mo-content');
+
+    function serverNow() { return Date.now() + offset; }
+
+    function ago(iso) {
+      if (!iso) return '-';
+      var s = Math.max(0, Math.round((serverNow() - Date.parse(iso)) / 1000));
+      if (s < 60) return s + ' dtk lalu';
+      if (s < 3600) return Math.floor(s / 60) + ' mnt lalu';
+      return SIULIN.fmtTime(iso);
+    }
+
+    function clock(sec) {
+      if (sec === null || sec === undefined) return '-';
+      var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      return (h ? h + ':' : '') + pad(m) + ':' + pad(s);
+    }
+
+    function visibleRows() {
+      var k = $('#mo-kelas').value, f = $('#mo-filter').value;
+      return data.rows.filter(function (r) {
+        if (k && String(r.kelas).toUpperCase() !== k) return false;
+        if (f === 'terputus') return r.terputus;
+        if (f === 'done') return r.status === 'SELESAI' || r.status === 'WAKTU_HABIS';
+        return !f || r.status === f;
+      });
+    }
+
+    function render() {
+      var s = data.summary;
+      var stat = function (label, value, cls) {
+        return '<div class="card stat"><div class="muted">' + esc(label) + '</div><div class="stat-value ' + (cls || '') + '">' + esc(value) + '</div></div>';
+      };
+      $('#mo-summary').innerHTML = stat('Peserta', s.peserta) + stat('Belum mulai', s.belum) + stat('Mengerjakan', s.mengerjakan, 'rs-MENGERJAKAN') +
+        stat('Mungkin terputus', s.terputus, s.terputus ? 'rs-gagal' : '') + stat('Selesai', s.selesai, 'rs-SELESAI');
+      $('#mo-note').textContent = data.test.judul + ' · ' + SIULIN.fmtTime(data.test.mulai) + ' s.d. ' + SIULIN.fmtTime(data.test.selesai) +
+        '. Diperbarui ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+        '. "Mungkin terputus" = tidak ada simpanan otomatis lebih dari 3 menit.';
+
+      var rows = visibleRows();
+      content.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Siswa</th><th>Kelas</th><th>Status</th><th>Terjawab</th>' +
+        '<th>Sisa waktu</th><th>Simpan terakhir</th><th>Pindah tab</th><th></th></tr></thead><tbody>' +
+        (rows.length ? rows.map(function (r) {
+          var active = r.status === 'MENGERJAKAN';
+          return '<tr><td><strong>' + esc(r.nama) + '</strong><div class="muted">' + esc(r.username) + '</div></td>' +
+            '<td>' + esc(r.kelas) + '</td>' +
+            '<td class="rs-' + r.status + '">' + STATUS_LABEL[r.status] + (r.terputus ? '<div class="rs-gagal">Mungkin terputus</div>' : '') + '</td>' +
+            '<td>' + (r.jumlah_soal ? (r.terjawab === null ? '-' : r.terjawab) + ' / ' + r.jumlah_soal : '-') + '</td>' +
+            '<td>' + (active ? clock(r.sisa_detik) : r.selesai ? '<span class="muted">' + esc(SIULIN.fmtTime(r.selesai)) + '</span>' : '-') + '</td>' +
+            '<td>' + (active ? ago(r.terakhir_simpan) : '-') + '</td>' +
+            '<td>' + (r.attempt_id ? '<span class="' + (r.pindah_tab >= 3 ? 'rs-gagal' : '') + '">' + r.pindah_tab + '</span>' : '-') + '</td>' +
+            '<td class="actions">' + (active ? '<button class="btn btn-sm" type="button" data-act="extend" data-id="' + esc(r.attempt_id) + '">+ Waktu</button> ' +
+              '<button class="btn btn-sm" type="button" data-act="submit" data-id="' + esc(r.attempt_id) + '">Kumpulkan</button>' : '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="8" class="empty">Tidak ada siswa untuk filter ini.</td></tr>') +
+        '</tbody></table></div>';
+    }
+
+    function load() {
+      // Berhenti bila pindah tampilan, keluar, atau sesi berakhir.
+      if (el.querySelector('#mo-content') !== content || document.getElementById('page-dashboard').hidden || !SIULIN.state.session) return stop();
+      var id = $('#mo-test').value;
+      if (!id) return;
+      SIULIN.callApi('monitor.list', { test_ref: id }).then(function (d) {
+        if (id !== $('#mo-test').value) return;
+        data = d;
+        offset = Date.parse(d.server_now) - Date.now();
+        var kelas = {};
+        d.rows.forEach(function (r) { if (r.kelas) kelas[String(r.kelas).toUpperCase()] = true; });
+        var chosen = $('#mo-kelas').value;
+        $('#mo-kelas').innerHTML = '<option value="">Semua</option>' + Object.keys(kelas).sort().map(function (k) {
+          return '<option' + (k === chosen ? ' selected' : '') + '>' + esc(k) + '</option>';
+        }).join('');
+        render();
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+    function nameOf(attemptId) {
+      var r = data.rows.filter(function (x) { return x.attempt_id === attemptId; })[0];
+      return r ? r.nama : 'siswa ini';
+    }
+
+    content.addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-act]');
+      if (!b) return;
+      var id = b.getAttribute('data-id');
+      var nama = nameOf(id);
+      var req;
+      if (b.getAttribute('data-act') === 'extend') {
+        var menit = prompt('Tambah waktu untuk ' + nama + ' (menit, 1-60):', '10');
+        if (menit === null) return;
+        req = SIULIN.callApi('monitor.extend', { attempt_ref: id, menit: Number(menit) }).then(function () {
+          SIULIN.toast('Waktu ' + nama + ' ditambah ' + Number(menit) + ' menit. Timer siswa berubah dalam 1 menit.');
+        });
+      } else {
+        if (!confirm('Kumpulkan jawaban ' + nama + ' sekarang?\n\nYang dinilai adalah jawaban yang tersimpan otomatis terakhir. Siswa tidak bisa melanjutkan.')) return;
+        req = SIULIN.callApi('monitor.submit', { attempt_ref: id }).then(function () { SIULIN.toast('Jawaban ' + nama + ' sudah dikumpulkan.'); });
+      }
+      b.disabled = true;
+      req.catch(function (e) { SIULIN.toast(e.message); }).then(load);
+    });
+
+    $('#mo-test').addEventListener('change', function () { $('#mo-kelas').value = ''; load(); });
+    $('#mo-kelas').addEventListener('change', function () { if (data) render(); });
+    $('#mo-filter').addEventListener('change', function () { if (data) render(); });
+    $('#mo-refresh').addEventListener('click', load);
+
+    SIULIN.callApi('monitor.tests').then(function (d) {
+      if (!d.length) {
+        content.innerHTML = '<div class="card empty">Tidak ada tes yang sedang berlangsung.</div>';
+        return;
+      }
+      $('#mo-test').innerHTML = d.map(function (t) {
+        return '<option value="' + esc(t.test_id) + '">' + esc(t.judul + ' (' + (t.kelas_peserta || []).join(', ') + ')' + (t.status === 'SELESAI' ? ' - selesai' : '')) + '</option>';
+      }).join('');
+      load();
+      timer = setInterval(load, REFRESH_MS);
+    }).catch(function (e) { SIULIN.toast(e.message); });
+  }
+});
+</script>

@@ -83,7 +83,8 @@
     var seq = st.seq;
     showSaveStatus('Menyimpan...');
     SIULIN.callApi('attempt.save', { attempt_ref: pkg.attempt_id, seq: seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString() })
-      .then(function () {
+      .then(function (r) {
+        syncDeadline(r);
         st.savedSeq = Math.max(st.savedSeq, seq);
         persist();
         showSaveStatus(st.seq > st.savedSeq ? null : 'Tersimpan ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
@@ -95,13 +96,29 @@
       .then(function () { saving = false; });
   }
 
+  /** Pengawas bisa menambah waktu: server mengirim batas_waktu terbaru di setiap balasan. */
+  function syncDeadline(r) {
+    if (!r || !r.batas_waktu) return;
+    if (r.server_now) offset = Date.parse(r.server_now) - Date.now();
+    var next = Date.parse(r.batas_waktu);
+    if (next > deadline) SIULIN.toast('Waktu mengerjakan ditambah oleh pengawas.');
+    deadline = next;
+  }
+
   function submit(auto) {
     if (finished) return;
     finished = true;
     stopTimers();
     SIULIN.loading(true);
-    SIULIN.callApi('attempt.submit', { attempt_ref: pkg.attempt_id, seq: st.seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString() })
+    SIULIN.callApi('attempt.submit', { attempt_ref: pkg.attempt_id, seq: st.seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString(), auto: !!auto })
       .then(function (r) {
+        if (r.status === 'PROGRESS') {
+          // Waktu sudah ditambah pengawas: lanjut mengerjakan.
+          finished = false;
+          syncDeadline(r);
+          startTimers();
+          return;
+        }
         try { localStorage.removeItem(storeKey()); } catch (e) {}
         $('ex-done-title').textContent = r.status === 'TIMEOUT' ? 'Waktu habis' : 'Jawaban terkirim';
         $('ex-done-text').textContent = r.status === 'TIMEOUT'
