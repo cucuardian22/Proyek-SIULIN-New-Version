@@ -7,39 +7,67 @@
     <main class="main">
       <div class="topbar">
         <div>
-          <h1 id="dash-greeting"></h1>
+          <h1 id="dash-title"></h1>
           <div class="muted" id="dash-school"></div>
         </div>
         <button class="btn" id="btn-logout" type="button">Keluar</button>
       </div>
-      <div class="card">
-        <h2>Beranda</h2>
-        <p class="muted">Menu yang belum aktif akan dibuka bertahap sesuai roadmap Tahap 1.</p>
-      </div>
+      <div id="view"></div>
     </main>
   </div>
 </section>
 <script>
 (function () {
-  // Menu per peran. "soon" = belum dibangun pada tahap ini.
+  // Menu per peran. Item tanpa view terdaftar ditampilkan redup (belum dibangun).
   var MENU = {
-    SUPER_ADMIN: ['Beranda', 'Sekolah', 'Topik ujian', 'Bank soal global'],
-    ADMIN:       ['Beranda', 'Pengguna', 'Ujian & mapel', 'Bank soal', 'Jadwal tes', 'Token', 'Rekap nilai'],
-    GURU:        ['Beranda', 'Bank soal', 'Jadwal tes', 'Token', 'Rekap nilai'],
-    PENGAWAS:    ['Beranda', 'Token', 'Monitoring'],
-    SISWA:       ['Beranda', 'Ujian saya']
+    SUPER_ADMIN: [['home', 'Beranda'], ['schools', 'Sekolah'], ['users', 'Pengguna'], ['topics', 'Topik ujian'], ['questions', 'Bank soal global']],
+    ADMIN:       [['home', 'Beranda'], ['users', 'Pengguna'], ['exams', 'Ujian & mapel'], ['questions', 'Bank soal'], ['tests', 'Jadwal tes'], ['tokens', 'Token'], ['results', 'Rekap nilai']],
+    GURU:        [['home', 'Beranda'], ['questions', 'Bank soal'], ['tests', 'Jadwal tes'], ['tokens', 'Token'], ['results', 'Rekap nilai']],
+    PENGAWAS:    [['home', 'Beranda'], ['tokens', 'Token'], ['monitoring', 'Monitoring']],
+    SISWA:       [['home', 'Beranda'], ['my-exams', 'Ujian saya']]
   };
+  var current = 'home';
+
+  SIULIN.view('home', {
+    title: 'Beranda',
+    render: function (el) {
+      el.innerHTML = '<div class="card"><h2>Selamat datang</h2><p class="muted">Menu yang masih redup akan dibuka bertahap sesuai roadmap Tahap 1.</p></div>';
+    }
+  });
+
+  function renderMenu() {
+    var u = SIULIN.state.user || {};
+    document.getElementById('menu').innerHTML = (MENU[u.role] || [['home', 'Beranda']]).map(function (item) {
+      var ready = SIULIN.hasView(item[0]);
+      return '<a href="#" data-view="' + item[0] + '" class="' + (item[0] === current ? 'active ' : '') + (ready ? '' : 'soon') + '">' +
+        SIULIN.esc(item[1]) + '</a>';
+    }).join('');
+  }
+
+  function open(key) {
+    current = key;
+    renderMenu();
+    var def = SIULIN.getView(key);
+    document.getElementById('dash-title').textContent = def.title;
+    var el = document.getElementById('view');
+    el.innerHTML = '';
+    def.render(el);
+  }
+
+  document.getElementById('menu').addEventListener('click', function (ev) {
+    var a = ev.target.closest('a[data-view]');
+    if (!a) return;
+    ev.preventDefault();
+    if (SIULIN.hasView(a.getAttribute('data-view'))) open(a.getAttribute('data-view'));
+  });
 
   SIULIN.page('dashboard', {
     el: 'page-dashboard',
     onShow: function () {
       var u = SIULIN.state.user || {};
-      document.getElementById('dash-greeting').textContent = 'Halo, ' + (u.nama || u.username || '');
       document.getElementById('dash-school').innerHTML =
-        SIULIN.esc(u.nama_sekolah) + ' &middot; <span class="badge">' + SIULIN.esc(u.role) + '</span>';
-      document.getElementById('menu').innerHTML = (MENU[u.role] || ['Beranda']).map(function (label, i) {
-        return '<a href="#" class="' + (i === 0 ? 'active' : 'soon') + '">' + SIULIN.esc(label) + '</a>';
-      }).join('');
+        SIULIN.esc(u.nama || u.username) + ' &middot; ' + SIULIN.esc(u.nama_sekolah) + ' &middot; <span class="badge">' + SIULIN.esc(u.role) + '</span>';
+      open('home');
     }
   });
 

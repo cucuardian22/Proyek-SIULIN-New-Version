@@ -1,0 +1,261 @@
+<script>
+// Tampilan "Pengguna": daftar, tambah, ubah, reset password, nonaktifkan, import, export.
+SIULIN.view('users', {
+  title: 'Pengguna',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    var isSuper = SIULIN.state.user.role === 'SUPER_ADMIN';
+    var CHUNK = 100;
+    var TEMPLATE = [['username', 'nama', 'role', 'kelas', 'password', 'mapel_diampu'],
+      ['0012345678', 'Ani Lestari', 'SISWA', '7A', '', ''],
+      ['budi.guru', 'Budi Santoso', 'GURU', '', '', 'MTK,IPA']];
+    var users = [];
+    var editing = null;
+
+    el.innerHTML =
+      (isSuper ? '<div class="toolbar"><label class="field"><span>Sekolah</span><select id="usr-school"><option value="">Memuat...</option></select></label></div>' : '') +
+      '<div class="toolbar">' +
+      '  <label class="field"><span>Peran</span><select id="usr-role"><option value="">Semua</option><option>ADMIN</option><option>GURU</option><option>PENGAWAS</option><option>SISWA</option></select></label>' +
+      '  <label class="field"><span>Kelas</span><input id="usr-kelas" placeholder="Semua"></label>' +
+      '  <div class="spacer"></div>' +
+      '  <button class="btn" type="button" id="usr-export">Export CSV</button>' +
+      '  <button class="btn" type="button" id="usr-import-open">Import</button>' +
+      '  <button class="btn btn-blue" type="button" id="usr-add">Tambah pengguna</button>' +
+      '</div>' +
+      '<div id="usr-notice"></div>' +
+      '<form id="usr-form" class="card panel" hidden novalidate>' +
+      '  <h2 id="usr-form-title"></h2>' +
+      '  <div class="grid-2">' +
+      '    <label class="field"><span>Username</span><input name="username" autocomplete="off"></label>' +
+      '    <label class="field"><span>Nama lengkap</span><input name="nama"></label>' +
+      '    <label class="field"><span>Peran</span><select name="role"><option>SISWA</option><option>GURU</option><option>PENGAWAS</option><option>ADMIN</option></select></label>' +
+      '    <label class="field"><span>Kelas (wajib untuk siswa)</span><input name="kelas"></label>' +
+      '    <label class="field"><span>Mapel diampu (pisahkan koma)</span><input name="mapel_diampu" placeholder="MTK,IPA"></label>' +
+      '    <label class="field" id="usr-pass-field"><span>Password (kosongkan agar dibuat otomatis)</span><input name="password" type="text" autocomplete="new-password"></label>' +
+      '  </div>' +
+      '  <p class="error" id="usr-error" role="alert"></p>' +
+      '  <button class="btn btn-blue" type="submit">Simpan</button> <button class="btn" type="button" id="usr-cancel">Batal</button>' +
+      '</form>' +
+      '<div id="usr-import" class="card panel" hidden>' +
+      '  <h2>Import pengguna</h2>' +
+      '  <p class="muted">Salin tabel dari Excel atau Google Sheets (termasuk baris judul) lalu tempel di bawah, atau pilih file CSV. Kolom: username, nama, role, kelas, password, mapel_diampu. Password kosong akan dibuat otomatis.</p>' +
+      '  <div class="toolbar"><input type="file" id="usr-file" accept=".csv,.tsv,.txt"><button class="btn btn-sm" type="button" id="usr-template">Unduh template</button></div>' +
+      '  <textarea id="usr-paste" placeholder="username&#9;nama&#9;role&#9;kelas&#10;0012345678&#9;Ani Lestari&#9;SISWA&#9;7A"></textarea>' +
+      '  <div id="usr-import-result" style="margin-top:12px"></div>' +
+      '  <button class="btn btn-blue" type="button" id="usr-import-run">Periksa lalu import</button> <button class="btn" type="button" id="usr-import-close">Tutup</button>' +
+      '</div>' +
+      '<div class="table-wrap"><table><thead><tr><th>Username</th><th>Nama</th><th>Peran</th><th>Kelas</th><th>Status</th><th></th></tr></thead>' +
+      '<tbody id="usr-body"><tr><td colspan="6" class="empty">Memuat...</td></tr></tbody></table></div>';
+
+    var $ = function (sel) { return el.querySelector(sel); };
+    var form = $('#usr-form');
+
+    function scope(payload) {
+      payload = payload || {};
+      if (isSuper) payload.target_school = $('#usr-school').value;
+      return payload;
+    }
+
+    function notice(html, ok) {
+      $('#usr-notice').innerHTML = html ? '<div class="notice' + (ok ? ' ok' : '') + '">' + html + '</div>' : '';
+    }
+
+    function credentialNotice(username, password) {
+      notice('Password untuk <strong>' + esc(username) + '</strong>: <strong>' + esc(password) + '</strong>. Catat sekarang; password tidak bisa dilihat lagi.', true);
+    }
+
+    function load() {
+      if (isSuper && !$('#usr-school').value) {
+        $('#usr-body').innerHTML = '<tr><td colspan="6" class="empty">Pilih sekolah dulu.</td></tr>';
+        return;
+      }
+      SIULIN.callApi('user.list', scope({ role: $('#usr-role').value, kelas: $('#usr-kelas').value.trim() }))
+        .then(function (data) { users = data; draw(); })
+        .catch(function (err) { SIULIN.toast(err.message); });
+    }
+
+    function draw() {
+      var body = $('#usr-body');
+      if (!users.length) { body.innerHTML = '<tr><td colspan="6" class="empty">Belum ada pengguna.</td></tr>'; return; }
+      body.innerHTML = users.map(function (u) {
+        var toggle = u.status === 'AKTIF' ? 'Nonaktifkan' : 'Aktifkan';
+        return '<tr><td>' + esc(u.username) + '</td><td>' + esc(u.nama) +
+          (u.mapel_diampu && u.mapel_diampu.length ? '<div class="muted">' + esc(u.mapel_diampu.join(', ')) + '</div>' : '') + '</td>' +
+          '<td>' + esc(u.role) + '</td><td>' + esc(u.kelas) + '</td><td class="status-' + esc(u.status) + '">' + esc(u.status) + '</td>' +
+          '<td class="actions">' +
+          '<button class="btn btn-sm" type="button" data-act="edit" data-id="' + esc(u.user_id) + '">Ubah</button> ' +
+          '<button class="btn btn-sm" type="button" data-act="reset" data-id="' + esc(u.user_id) + '">Reset password</button> ' +
+          '<button class="btn btn-sm" type="button" data-act="toggle" data-id="' + esc(u.user_id) + '">' + toggle + '</button></td></tr>';
+      }).join('');
+    }
+
+    function openForm(user) {
+      editing = user;
+      form.hidden = false;
+      $('#usr-import').hidden = true;
+      $('#usr-form-title').textContent = user ? 'Ubah ' + user.nama : 'Tambah pengguna';
+      form.username.value = user ? user.username : '';
+      form.username.disabled = !!user;
+      form.nama.value = user ? user.nama : '';
+      form.role.value = user ? user.role : 'SISWA';
+      form.kelas.value = user ? user.kelas : '';
+      form.mapel_diampu.value = user && user.mapel_diampu ? user.mapel_diampu.join(',') : '';
+      form.password.value = '';
+      $('#usr-pass-field').hidden = !!user;
+      $('#usr-error').textContent = '';
+      (user ? form.nama : form.username).focus();
+    }
+
+    function byId(id) { return users.filter(function (u) { return u.user_id === id; })[0]; }
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var payload = scope({ nama: form.nama.value, role: form.role.value, kelas: form.kelas.value, mapel_diampu: form.mapel_diampu.value });
+      if (editing) payload.user_ref = editing.user_id;
+      else { payload.username = form.username.value; payload.password = form.password.value; }
+      var btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      SIULIN.callApi(editing ? 'user.update' : 'user.create', payload)
+        .then(function (res) {
+          form.hidden = true;
+          if (res.password) credentialNotice(res.user.username, res.password);
+          else notice('Data ' + esc(res.user.nama) + ' tersimpan.', true);
+          load();
+        })
+        .catch(function (err) { $('#usr-error').textContent = err.message; })
+        .then(function () { btn.disabled = false; });
+    });
+
+    $('#usr-body').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('button[data-act]');
+      if (!btn) return;
+      var u = byId(btn.getAttribute('data-id'));
+      var act = btn.getAttribute('data-act');
+      if (act === 'edit') return openForm(u);
+      var payload = scope({ user_ref: u.user_id });
+      if (act === 'reset') {
+        if (!confirm('Buat password baru untuk ' + u.nama + '? Sesi yang sedang berjalan akan berakhir.')) return;
+        payload.reset_password = true;
+      } else {
+        payload.status = u.status === 'AKTIF' ? 'NONAKTIF' : 'AKTIF';
+        if (payload.status === 'NONAKTIF' && !confirm('Nonaktifkan ' + u.nama + '? Pengguna akan langsung keluar.')) return;
+      }
+      btn.disabled = true;
+      SIULIN.callApi('user.update', payload)
+        .then(function (res) {
+          if (res.password) credentialNotice(res.user.username, res.password);
+          else notice('Status ' + esc(res.user.nama) + ' sekarang ' + esc(res.user.status) + '.', true);
+          load();
+        })
+        .catch(function (err) { SIULIN.toast(err.message); btn.disabled = false; });
+    });
+
+    // ---------- import ----------
+
+    function showImportErrors(errors) {
+      $('#usr-import-result').innerHTML = '<div class="notice"><strong>Tidak ada yang disimpan.</strong> Perbaiki baris berikut lalu coba lagi:</div><ul class="errors">' +
+        errors.slice(0, 50).map(function (e) { return '<li>Baris ' + e.row + ': ' + esc(e.messages.join(' ')) + '</li>'; }).join('') +
+        (errors.length > 50 ? '<li>... dan ' + (errors.length - 50) + ' baris lain</li>' : '') + '</ul>';
+    }
+
+    function chunks(rows) {
+      var out = [];
+      for (var i = 0; i < rows.length; i += CHUNK) out.push(rows.slice(i, i + CHUNK));
+      return out;
+    }
+
+    /** Kirim potongan satu per satu (berurutan) agar tidak memborong kuota eksekusi serentak. */
+    function sequential(parts, dryRun, onProgress) {
+      var result = { inserted: 0, errors: [], credentials: [] };
+      return parts.reduce(function (p, part, i) {
+        return p.then(function () {
+          if (!dryRun && result.errors.length) return;
+          return SIULIN.callApi('user.import', scope({ rows: part, dry_run: dryRun })).then(function (r) {
+            result.inserted += r.inserted;
+            result.errors = result.errors.concat(r.errors);
+            result.credentials = result.credentials.concat(r.credentials);
+            onProgress(i + 1, parts.length);
+          });
+        });
+      }, Promise.resolve()).then(function () { return result; });
+    }
+
+    $('#usr-import-run').addEventListener('click', function () {
+      var rows = SIULIN.parseTable($('#usr-paste').value);
+      var out = $('#usr-import-result');
+      if (!rows.length) { out.innerHTML = '<div class="notice">Tempel data atau pilih file dulu.</div>'; return; }
+      if (!('username' in rows[0]) || !('nama' in rows[0])) {
+        out.innerHTML = '<div class="notice">Baris judul wajib memuat kolom <strong>username</strong> dan <strong>nama</strong>.</div>';
+        return;
+      }
+      var seen = {}, dupes = [];
+      rows.forEach(function (r) {
+        var k = String(r.username || '').toLowerCase();
+        if (k && seen[k]) dupes.push({ row: r._row, messages: ['Username ' + r.username + ' muncul dua kali di file (juga di baris ' + seen[k] + ').'] });
+        else seen[k] = r._row;
+      });
+      if (dupes.length) return showImportErrors(dupes);
+
+      var btn = this;
+      btn.disabled = true;
+      var parts = chunks(rows);
+      out.innerHTML = '<div class="notice">Memeriksa ' + rows.length + ' baris...</div>';
+      sequential(parts, true, function () {})
+        .then(function (check) {
+          if (check.errors.length) { showImportErrors(check.errors); return; }
+          return sequential(parts, false, function (done, total) {
+            out.innerHTML = '<div class="notice">Menyimpan bagian ' + done + ' dari ' + total + '...</div>';
+          }).then(function (res) {
+            if (res.errors.length) {
+              showImportErrors(res.errors);
+              out.insertAdjacentHTML('afterbegin', '<div class="notice">' + res.inserted + ' pengguna sempat tersimpan sebelum kesalahan ini.</div>');
+            } else {
+              out.innerHTML = '<div class="notice ok">' + res.inserted + ' pengguna berhasil diimport. <button class="btn btn-sm" type="button" id="usr-cred">Unduh daftar password</button></div>';
+              $('#usr-cred').addEventListener('click', function () {
+                SIULIN.download('password-pengguna.csv', SIULIN.toCsv([['username', 'nama', 'kelas', 'password']].concat(
+                  res.credentials.map(function (c) { return [c.username, c.nama, c.kelas, c.password || '(dari file)']; }))));
+              });
+              $('#usr-paste').value = '';
+            }
+            load();
+          });
+        })
+        .catch(function (err) { out.innerHTML = '<div class="notice">' + esc(err.message) + '</div>'; })
+        .then(function () { btn.disabled = false; });
+    });
+
+    $('#usr-file').addEventListener('change', function () {
+      var file = this.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () { $('#usr-paste').value = reader.result; };
+      reader.readAsText(file);
+    });
+
+    $('#usr-template').addEventListener('click', function () { SIULIN.download('template-pengguna.csv', SIULIN.toCsv(TEMPLATE)); });
+    $('#usr-export').addEventListener('click', function () {
+      SIULIN.download('pengguna.csv', SIULIN.toCsv([['username', 'nama', 'role', 'kelas', 'mapel_diampu', 'status']].concat(users.map(function (u) {
+        return [u.username, u.nama, u.role, u.kelas, (u.mapel_diampu || []).join(','), u.status];
+      }))));
+    });
+    $('#usr-add').addEventListener('click', function () { openForm(null); });
+    $('#usr-cancel').addEventListener('click', function () { form.hidden = true; });
+    $('#usr-import-open').addEventListener('click', function () { $('#usr-import').hidden = false; form.hidden = true; });
+    $('#usr-import-close').addEventListener('click', function () { $('#usr-import').hidden = true; });
+    $('#usr-role').addEventListener('change', load);
+    $('#usr-kelas').addEventListener('change', load);
+
+    if (isSuper) {
+      $('#usr-school').addEventListener('change', load);
+      SIULIN.callApi('school.list').then(function (list) {
+        $('#usr-school').innerHTML = '<option value="">Pilih sekolah</option>' + list.map(function (s) {
+          return '<option value="' + esc(s.school_id) + '">' + esc(s.nama_unik + ' - ' + s.nama_sekolah) + '</option>';
+        }).join('');
+        load();
+      }).catch(function (err) { SIULIN.toast(err.message); });
+    } else {
+      load();
+    }
+  }
+});
+</script>

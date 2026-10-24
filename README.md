@@ -11,8 +11,9 @@ Tahap 1, bagian fondasi:
 - Login, sesi, batas percobaan login, RBAC 5 peran, satu pintu API (`Auth.gs`, `Rbac.gs`, `Api.gs`)
 - Penilaian otomatis PG, PGK, PGBS, PGST (`service/ScoringService.gs`)
 - Halaman Login dan Dashboard
+- Sekolah (SUPER_ADMIN) dan pengguna: tambah, ubah, reset password, nonaktifkan, import dari tempelan Excel/Sheets atau CSV (dicek seluruhnya sebelum disimpan, dikirim per 100 baris), export CSV
 
-Berikutnya: pengguna & import, bank soal & import, jadwal tes & token, mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
+Berikutnya: bank soal & import, jadwal tes & token, mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
 
 ## Struktur
 
@@ -33,10 +34,10 @@ src/
       BaseRepo.gs      CRUD generik + cache + isolasi sekolah
       Repos.gs, SchoolRepo.gs, UserRepo.gs
     service/       logika bisnis murni
-      ScoringService.gs
+      ScoringService.gs, SchoolService.gs, UserService.gs
   client/
-    Index.html, Style.html, Core.js.html (callApi, sesi, navigasi)
-    pages/Login.html, pages/Dashboard.html
+    Index.html, Style.html, Core.js.html (callApi, sesi, navigasi, CSV)
+    pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
 ```
 

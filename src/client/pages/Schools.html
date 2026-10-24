@@ -1,0 +1,81 @@
+<script>
+// Tampilan "Sekolah" untuk SUPER_ADMIN: daftar, tambah, ubah, nonaktifkan.
+SIULIN.view('schools', {
+  title: 'Sekolah',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    var schools = [];
+    var editing = null;
+
+    el.innerHTML =
+      '<div class="toolbar"><div class="spacer"></div><button class="btn btn-blue" id="sch-add" type="button">Tambah sekolah</button></div>' +
+      '<form id="sch-form" class="card panel" hidden novalidate>' +
+      '  <h2 id="sch-form-title">Tambah sekolah</h2>' +
+      '  <div class="grid-2">' +
+      '    <label class="field"><span>Nama sekolah</span><input name="nama_sekolah" required></label>' +
+      '    <label class="field"><span>Kode sekolah (untuk login)</span><input name="nama_unik" placeholder="Contoh: ESPEGE" required></label>' +
+      '    <label class="field"><span>Jenjang</span><select name="jenjang"><option>SD</option><option>SMP</option><option>SMA</option><option>SMK</option><option>MI</option><option>MTS</option><option>MA</option></select></label>' +
+      '    <label class="field"><span>Status</span><select name="status"><option>AKTIF</option><option>NONAKTIF</option></select></label>' +
+      '  </div>' +
+      '  <label class="field"><span>Alamat</span><input name="alamat"></label>' +
+      '  <p class="error" id="sch-error" role="alert"></p>' +
+      '  <button class="btn btn-blue" type="submit">Simpan</button> <button class="btn" type="button" id="sch-cancel">Batal</button>' +
+      '</form>' +
+      '<div class="table-wrap"><table><thead><tr><th>Kode</th><th>Nama sekolah</th><th>Jenjang</th><th>Status</th><th></th></tr></thead>' +
+      '<tbody id="sch-body"><tr><td colspan="5" class="empty">Memuat...</td></tr></tbody></table></div>';
+
+    var form = el.querySelector('#sch-form');
+    var errorEl = el.querySelector('#sch-error');
+
+    function load() {
+      SIULIN.callApi('school.list').then(function (data) { schools = data; draw(); })
+        .catch(function (err) { SIULIN.toast(err.message); });
+    }
+
+    function draw() {
+      var body = el.querySelector('#sch-body');
+      if (!schools.length) { body.innerHTML = '<tr><td colspan="5" class="empty">Belum ada sekolah.</td></tr>'; return; }
+      body.innerHTML = schools.map(function (s) {
+        return '<tr><td><strong>' + esc(s.nama_unik) + '</strong></td><td>' + esc(s.nama_sekolah) + '<div class="muted">' + esc(s.alamat) + '</div></td>' +
+          '<td>' + esc(s.jenjang) + '</td><td class="status-' + esc(s.status) + '">' + esc(s.status) + '</td>' +
+          '<td class="actions"><button class="btn btn-sm" type="button" data-edit="' + esc(s.school_id) + '">Ubah</button></td></tr>';
+      }).join('');
+    }
+
+    function openForm(school) {
+      editing = school;
+      form.hidden = false;
+      el.querySelector('#sch-form-title').textContent = school ? 'Ubah ' + school.nama_sekolah : 'Tambah sekolah';
+      ['nama_sekolah', 'nama_unik', 'alamat'].forEach(function (k) { form[k].value = school ? school[k] : ''; });
+      form.jenjang.value = school && school.jenjang ? school.jenjang : 'SMP';
+      form.status.value = school ? school.status : 'AKTIF';
+      errorEl.textContent = '';
+      form.nama_sekolah.focus();
+    }
+
+    el.querySelector('#sch-add').addEventListener('click', function () { openForm(null); });
+    el.querySelector('#sch-cancel').addEventListener('click', function () { form.hidden = true; });
+    el.querySelector('#sch-body').addEventListener('click', function (ev) {
+      var id = ev.target.getAttribute('data-edit');
+      if (id) openForm(schools.filter(function (s) { return s.school_id === id; })[0]);
+    });
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var payload = {
+        nama_sekolah: form.nama_sekolah.value, nama_unik: form.nama_unik.value,
+        jenjang: form.jenjang.value, alamat: form.alamat.value, status: form.status.value
+      };
+      if (editing) payload.school_ref = editing.school_id;
+      var btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      SIULIN.callApi(editing ? 'school.update' : 'school.create', payload)
+        .then(function () { form.hidden = true; SIULIN.toast('Data sekolah tersimpan.'); load(); })
+        .catch(function (err) { errorEl.textContent = err.message; })
+        .then(function () { btn.disabled = false; });
+    });
+
+    load();
+  }
+});
+</script>

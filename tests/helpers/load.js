@@ -14,7 +14,9 @@ const FILES = {
   UserRepo: 'repo/UserRepo.gs',
   Auth: 'Auth.gs',
   Api: 'Api.gs',
-  ScoringService: 'service/ScoringService.gs'
+  ScoringService: 'service/ScoringService.gs',
+  SchoolService: 'service/SchoolService.gs',
+  UserService: 'service/UserService.gs'
 };
 
 function loadApp(opts) {

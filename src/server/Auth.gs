@@ -166,6 +166,14 @@ var Auth = (function () {
     }
   }
 
+  /** Akhiri semua sesi pengguna (dipakai saat dinonaktifkan atau password direset). */
+  function revokeUserSessions(userId) {
+    Repos.sessions().findMany(SYSTEM, { user_id: userId }).forEach(function (s) {
+      Platform.cache().remove(sessionKey(s.session_id));
+      Repos.sessions().softDelete(SYSTEM, s.session_id);
+    });
+  }
+
   /** ctx untuk repository, dibangun hanya dari sesi server. */
   function contextOf(session) {
     return { userId: session.user_id, schoolId: session.school_id, role: session.role };
@@ -175,6 +183,7 @@ var Auth = (function () {
     SYSTEM: SYSTEM,
     login: login,
     logout: logout,
+    revokeUserSessions: revokeUserSessions,
     getSession: getSession,
     contextOf: contextOf,
     makePasswordFields: makePasswordFields,

@@ -7,6 +7,7 @@
 var SIULIN = (function () {
   var SESSION_KEY = 'siulin.session';
   var pages = {};
+  var views = {};
   var state = { session: null, user: null };
 
   function callApi(route, payload) {
@@ -55,6 +56,65 @@ var SIULIN = (function () {
     if (pages[name] && pages[name].onShow) pages[name].onShow(params || {});
   }
 
+  /** Daftarkan tampilan di dalam dashboard: { title, render(el) } */
+  function view(key, def) { views[key] = def; }
+  function hasView(key) { return !!views[key]; }
+  function getView(key) { return views[key]; }
+
+  /** Unduh teks sebagai file (CSV kredensial, export). */
+  function download(filename, text, mime) {
+    var blob = new Blob(['\ufeff' + text], { type: (mime || 'text/csv') + ';charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  /** Ubah array baris menjadi teks CSV (pemisah koma, kutip bila perlu). */
+  function toCsv(rows) {
+    return rows.map(function (r) {
+      return r.map(function (v) {
+        v = v === null || v === undefined ? '' : String(v);
+        return /[",\n;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      }).join(',');
+    }).join('\r\n');
+  }
+
+  /**
+   * Baca teks tabel dari CSV/TSV (tempel dari Excel/Google Sheets menghasilkan TSV).
+   * Baris pertama = header. Mengembalikan array objek dengan _row = nomor baris di file.
+   */
+  function parseTable(text) {
+    text = String(text || '').replace(/^\ufeff/, '');
+    var firstLine = text.split(/\r?\n/)[0] || '';
+    var delim = firstLine.indexOf('\t') >= 0 ? '\t' : (firstLine.indexOf(';') >= 0 ? ';' : ',');
+    var rows = [], row = [], cell = '', quoted = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (quoted) {
+        if (c === '"' && text.charAt(i + 1) === '"') { cell += '"'; i++; }
+        else if (c === '"') quoted = false;
+        else cell += c;
+      } else if (c === '"' && cell === '') quoted = true;
+      else if (c === delim) { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text.charAt(i + 1) === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += c;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    rows = rows.filter(function (r) { return r.some(function (v) { return String(v).trim() !== ''; }); });
+    if (!rows.length) return [];
+    var header = rows[0].map(function (h) { return String(h).trim().toLowerCase(); });
+    return rows.slice(1).map(function (r, idx) {
+      var obj = { _row: idx + 2 };
+      header.forEach(function (h, j) { if (h) obj[h] = String(r[j] === undefined ? '' : r[j]).trim(); });
+      return obj;
+    });
+  }
+
   function loading(on) { document.getElementById('loading').hidden = !on; }
 
   var toastTimer = null;
@@ -84,7 +144,9 @@ var SIULIN = (function () {
 
   return {
     state: state, callApi: callApi, saveSession: saveSession, clearSession: clearSession,
-    page: page, show: show, loading: loading, toast: toast, esc: esc, start: start
+    page: page, show: show, view: view, hasView: hasView, getView: getView,
+    loading: loading, toast: toast, esc: esc, start: start,
+    download: download, toCsv: toCsv, parseTable: parseTable
   };
 })();
 

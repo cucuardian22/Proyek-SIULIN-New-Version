@@ -24,7 +24,16 @@ var Api = (function () {
       handler: function (ctx, payload, session) {
         return { user: session.user, expires_at: session.expires_at };
       }
-    }
+    },
+
+    'school.list':   { permission: 'school.manage', handler: function (ctx) { return SchoolService.list(ctx); } },
+    'school.create': { permission: 'school.manage', handler: function (ctx, p) { return SchoolService.create(ctx, p); } },
+    'school.update': { permission: 'school.manage', handler: function (ctx, p) { return SchoolService.update(ctx, p); } },
+
+    'user.list':     { permission: 'user.manage', handler: function (ctx, p) { return UserService.list(ctx, p); } },
+    'user.create':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.create(ctx, p); } },
+    'user.update':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.update(ctx, p); } },
+    'user.import':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.importRows(ctx, p); } }
   };
 
   function sanitize(payload) {
