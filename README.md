@@ -9,7 +9,7 @@ Tahap 1, bagian fondasi:
 - Skema 12 sheet (`src/server/Schema.gs`) dan skrip pembuatnya (`Setup.gs`)
 - Repository generik dengan isolasi `school_id` dari sesi (`repo/BaseRepo.gs`)
 - Login, sesi, batas percobaan login, RBAC 5 peran, satu pintu API (`Auth.gs`, `Rbac.gs`, `Api.gs`)
-- Penilaian otomatis PG, PGK, PGBS, PGST (`service/ScoringService.gs`)
+- Penilaian otomatis PG, PGK, PGBS, PGST, ISIAN (`service/ScoringService.gs`)
 - Halaman Login dan Dashboard
 - Sekolah (SUPER_ADMIN) dan pengguna: tambah, ubah, reset password, nonaktifkan, import dari tempelan Excel/Sheets atau CSV (dicek seluruhnya sebelum disimpan, dikirim per 100 baris), export CSV
 
@@ -18,7 +18,9 @@ Tahap 1, bagian fondasi:
 
 - Jadwal tes (kelas peserta, rentang waktu, durasi, acak soal/opsi, KKM) dan token tes yang bisa diganti pengawas; soal ujian terkunci setelah tes dimulai
 
-Berikutnya: mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
+- Mesin ujian (`service/ExamEngine.gs`): siswa masuk dengan token, soal/opsi diacak per siswa tanpa kunci terkirim ke browser, timer dari jam server, tanda ragu-ragu, simpan otomatis tiap 60 detik dan saat pindah tab, lanjut setelah browser tertutup, kumpul otomatis saat waktu habis (trigger tiap 10 menit), nilai dihitung saat submit
+
+Berikutnya: rekap nilai, monitoring pengawas, uji beban.
 
 ## Struktur
 
@@ -33,7 +35,7 @@ src/
     Auth.gs        login, logout, sesi, hash password
     Rbac.gs        peta izin per peran
     Api.gs         apiCall(route, sessionId, payload): satu pintu untuk client
-    Setup.gs       setupSiulin(), setupSuperAdmin() (dijalankan dari editor)
+    Setup.gs       setupSiulin(), setupSuperAdmin(), setupTriggers() (dijalankan dari editor)
     repo/          SATU-SATUNYA kode yang menyentuh layanan Google
       GasPlatform.gs   adapter SpreadsheetApp/CacheService/LockService/Properties
       BaseRepo.gs      CRUD generik + cache + isolasi sekolah
@@ -41,12 +43,12 @@ src/
     service/       logika bisnis murni
       ScoringService.gs, SchoolService.gs, UserService.gs,
       TopicService.gs, ExamService.gs, QuestionService.gs,
-      TestService.gs, TokenService.gs
+      TestService.gs, TokenService.gs, ExamEngine.gs
   client/
     Index.html, Style.html, Core.js.html (callApi, sesi, navigasi, CSV)
     pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html,
     pages/Topics.html, pages/Exams.html, pages/Questions.html,
-    pages/Tests.html, pages/Tokens.html
+    pages/Tests.html, pages/Tokens.html, pages/MyExams.html, pages/Exam.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
 ```
 
@@ -66,7 +68,8 @@ tests/             unit test Node.js (tidak di-push ke Apps Script)
 | PG | bobot bila jawaban sama dengan kunci, selain itu 0 |
 | PGK | max(0, (benar dipilih - salah dipilih) / jumlah kunci) x bobot |
 | PGBS, PGST | (pernyataan dijawab benar / jumlah pernyataan) x bobot |
-| ISIAN, URAIAN | dinilai manual (Tahap 3) |
+| ISIAN | bobot bila sama dengan salah satu jawaban diterima (huruf besar/kecil dan spasi berlebih diabaikan) |
+| URAIAN | dinilai manual (Tahap 3) |
 
 Skor dibulatkan dua desimal. Contoh PGK: kunci [A, C], bobot 4. Jawaban [A] = 2, [A, C] = 4, [A, B] = 0, [A, B, C, D] = 0.
 
@@ -100,8 +103,9 @@ npm test
 3. `clasp push`.
 4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL spreadsheet MASTER dan ATTEMPT.
 5. Di Project Settings > Script Properties, isi `SETUP_ADMIN_USER` dan `SETUP_ADMIN_PASSWORD`, lalu jalankan `setupSuperAdmin`. Catat waktu hash di log; bila di atas 300 ms, turunkan `Config.HASH_ITERATIONS`.
-6. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
-7. Buka URL web app, login dengan kode sekolah `PUSAT`.
+6. Jalankan `setupTriggers` agar ujian yang waktunya habis tetap dikumpulkan.
+7. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
+8. Buka URL web app, login dengan kode sekolah `PUSAT`.
 
 Catatan: kolom `kelas_peserta` ditambahkan ke sheet Tests. Bila `setupSiulin()` sudah pernah dijalankan dan sheet Tests masih kosong, jalankan lagi; bila sudah berisi data, tambahkan kolom itu di akhir header secara manual.
 

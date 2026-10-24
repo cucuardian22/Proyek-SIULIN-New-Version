@@ -7,15 +7,17 @@
  *   PGK   opsi [{id:'A', teks}],     kunci ['A','C'],          jawaban ['A','B']
  *   PGBS  opsi [{id:'1', teks}],     kunci {'1':'B','2':'S'},  jawaban {'1':'B','2':'B'}   (B = Benar, S = Salah)
  *   PGST  opsi [{id:'1', teks}],     kunci {'1':'S','2':'TS'}, jawaban {'1':'S'}           (S = Setuju, TS = Tidak Setuju)
- *   ISIAN, URAIAN -> dinilai manual (skor null) pada Tahap 3.
+ *   ISIAN opsi [],                   kunci ['25','dua puluh lima'], jawaban 'Dua  puluh lima'
+ *         -> bobot penuh bila sama dengan salah satu kunci (abaikan huruf besar dan spasi berlebih)
+ *   URAIAN -> dinilai manual (skor null) pada Tahap 3.
  *
  * Aturan proporsional bersih:
  *   PGK        skor = max(0, (benar dipilih - salah dipilih) / jumlah kunci) x bobot
  *   PGBS/PGST  skor = (pernyataan dijawab benar / jumlah pernyataan) x bobot
  */
 var ScoringService = (function () {
-  var AUTO_TYPES = ['PG', 'PGK', 'PGBS', 'PGST'];
-  var ALL_TYPES = AUTO_TYPES.concat(['ISIAN', 'URAIAN']);
+  var AUTO_TYPES = ['PG', 'PGK', 'PGBS', 'PGST', 'ISIAN'];
+  var ALL_TYPES = AUTO_TYPES.concat(['URAIAN']);
   var STATEMENT_VALUES = { PGBS: ['B', 'S'], PGST: ['S', 'TS'] };
 
   function norm(v) { return String(v === null || v === undefined ? '' : v).trim().toUpperCase(); }
@@ -50,6 +52,15 @@ var ScoringService = (function () {
     return round2(Math.max(0, (benar - salah) / keys.length) * bobot);
   }
 
+  function squash(v) { return String(v === null || v === undefined ? '' : v).trim().replace(/\s+/g, ' ').toLowerCase(); }
+
+  function scoreIsian(kunci, jawaban, bobot) {
+    var ans = squash(Array.isArray(jawaban) ? jawaban[0] : jawaban);
+    if (!ans) return 0;
+    var keys = (Array.isArray(kunci) ? kunci : [kunci]).map(squash);
+    return keys.indexOf(ans) >= 0 ? bobot : 0;
+  }
+
   function scoreStatements(kunci, jawaban, bobot) {
     var ids = Object.keys(kunci || {});
     if (!ids.length) return 0;
@@ -72,7 +83,7 @@ var ScoringService = (function () {
       case 'PGK': return scorePGK(question.kunci, jawaban, bobot);
       case 'PGBS':
       case 'PGST': return scoreStatements(question.kunci, jawaban, bobot);
-      case 'ISIAN':
+      case 'ISIAN': return scoreIsian(question.kunci, jawaban, bobot);
       case 'URAIAN': return null;
       default: throw new Error('Tipe soal tidak dikenal: ' + question.tipe);
     }

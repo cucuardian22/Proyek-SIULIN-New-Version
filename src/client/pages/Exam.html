@@ -1,0 +1,271 @@
+<section id="page-exam" hidden>
+  <header class="exam-bar">
+    <div class="exam-title"><strong id="ex-judul"></strong><span class="muted" id="ex-save">Belum ada perubahan</span></div>
+    <div class="exam-timer" id="ex-timer" aria-live="off">--:--</div>
+    <button class="btn btn-sm" type="button" id="ex-nav-toggle">Daftar soal</button>
+  </header>
+  <div class="exam-body">
+    <main class="exam-main">
+      <div class="q-head"><strong id="ex-no"></strong><span class="badge" id="ex-type"></span><span class="muted" id="ex-bobot"></span></div>
+      <p class="q-text exam-text" id="ex-text"></p>
+      <div id="ex-media"></div>
+      <div id="ex-answer"></div>
+      <div class="exam-actions">
+        <button class="btn" type="button" id="ex-prev">&larr; Sebelumnya</button>
+        <label class="check exam-doubt"><input type="checkbox" id="ex-doubt"> Ragu-ragu</label>
+        <button class="btn btn-blue" type="button" id="ex-next">Berikutnya &rarr;</button>
+      </div>
+    </main>
+    <aside class="exam-nav" id="ex-nav">
+      <div class="exam-grid" id="ex-grid"></div>
+      <div class="muted exam-legend"><span class="sw answered"></span> dijawab <span class="sw doubt"></span> ragu-ragu</div>
+      <button class="btn btn-blue" type="button" id="ex-finish" style="width:100%">Selesai &amp; kumpulkan</button>
+    </aside>
+  </div>
+  <div class="exam-done" id="ex-done" hidden>
+    <div class="card" style="max-width:420px;text-align:center">
+      <h2 id="ex-done-title">Jawaban terkirim</h2>
+      <p class="muted" id="ex-done-text">Terima kasih. Jawaban Anda sudah dikumpulkan.</p>
+      <button class="btn btn-blue" type="button" id="ex-back">Kembali ke daftar ujian</button>
+    </div>
+  </div>
+</section>
+<script>
+/**
+ * Layar ujian siswa.
+ * - Jawaban disimpan di localStorage setiap berubah, lalu dikirim ke server tiap 60 detik
+ *   (dan segera, paling sering tiap 15 detik, saat siswa berpindah tab/jendela).
+ * - Pindah tab dihitung di browser dan ikut terkirim bersama auto-save berikutnya.
+ * - Timer memakai jam server; saat habis jawaban dikumpulkan otomatis.
+ */
+(function () {
+  var AUTOSAVE_MS = 60000;
+  var BLUR_SAVE_MIN_MS = 15000;
+  var LETTERS = 'ABCDEFGH';
+  var CHOICES = { PGBS: [['B', 'Benar'], ['S', 'Salah']], PGST: [['S', 'Setuju'], ['TS', 'Tidak setuju']] };
+  var TYPE_LABEL = { PG: 'Pilih satu jawaban', PGK: 'Pilih semua jawaban yang benar', PGBS: 'Benar atau salah', PGST: 'Setuju atau tidak setuju', ISIAN: 'Isian singkat', URAIAN: 'Uraian' };
+  var esc = SIULIN.esc;
+  var $ = function (id) { return document.getElementById(id); };
+
+  var pkg = null, st = null, idx = 0, offset = 0, deadline = 0;
+  var timers = { tick: null, save: null }, saving = false, lastBlurSave = 0, finished = false;
+  var inDialog = false; // confirm()/alert() memicu blur; jangan dihitung pindah tab
+
+  function ask(fn, msg) { inDialog = true; try { return fn(msg); } finally { setTimeout(function () { inDialog = false; }, 300); } }
+
+  function storeKey() { return 'siulin.att.' + pkg.attempt_id; }
+  function persist() { try { localStorage.setItem(storeKey(), JSON.stringify(st)); } catch (e) {} }
+
+  function loadState() {
+    var local = null;
+    try { local = JSON.parse(localStorage.getItem(storeKey()) || 'null'); } catch (e) {}
+    var server = pkg.saved;
+    if (local && (!server || local.seq >= server.seq)) return local;
+    return { seq: server ? server.seq : 0, savedSeq: server ? server.seq : 0, jawaban: server ? server.jawaban : {}, ragu: (local && local.ragu) || {}, tab: server ? server.jumlah_pindah_tab : 0 };
+  }
+
+  function changed() {
+    st.seq++;
+    persist();
+    showSaveStatus();
+    drawGrid();
+  }
+
+  function showSaveStatus(text) {
+    $('ex-save').textContent = text || (st.seq > st.savedSeq ? 'Ada jawaban yang belum terkirim' : 'Semua jawaban tersimpan');
+  }
+
+  // ---------- server ----------
+
+  function save(force) {
+    if (finished || saving || (!force && st.seq <= st.savedSeq)) return;
+    saving = true;
+    var seq = st.seq;
+    showSaveStatus('Menyimpan...');
+    SIULIN.callApi('attempt.save', { attempt_ref: pkg.attempt_id, seq: seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString() })
+      .then(function () {
+        st.savedSeq = Math.max(st.savedSeq, seq);
+        persist();
+        showSaveStatus(st.seq > st.savedSeq ? null : 'Tersimpan ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+      })
+      .catch(function (e) {
+        if (e.code === 'DONE' || e.code === 'TIME_UP') return submit(true);
+        showSaveStatus('Belum terkirim (' + e.message + '). Jawaban aman di perangkat ini.');
+      })
+      .then(function () { saving = false; });
+  }
+
+  function submit(auto) {
+    if (finished) return;
+    finished = true;
+    stopTimers();
+    SIULIN.loading(true);
+    SIULIN.callApi('attempt.submit', { attempt_ref: pkg.attempt_id, seq: st.seq, jawaban: st.jawaban, jumlah_pindah_tab: st.tab, client_ts: new Date().toISOString() })
+      .then(function (r) {
+        try { localStorage.removeItem(storeKey()); } catch (e) {}
+        $('ex-done-title').textContent = r.status === 'TIMEOUT' ? 'Waktu habis' : 'Jawaban terkirim';
+        $('ex-done-text').textContent = r.status === 'TIMEOUT'
+          ? 'Waktu mengerjakan sudah habis. Jawaban yang tersimpan terakhir sudah dikumpulkan.'
+          : 'Terima kasih. Jawaban Anda sudah dikumpulkan.';
+        $('ex-done').hidden = false;
+      })
+      .catch(function (e) {
+        finished = false;
+        startTimers();
+        ask(alert, (auto ? 'Waktu habis, tetapi ' : '') + 'jawaban belum terkirim: ' + e.message + '\nJawaban aman di perangkat ini. Periksa koneksi lalu tekan "Selesai & kumpulkan" lagi.');
+      })
+      .then(function () { SIULIN.loading(false); });
+  }
+
+  // ---------- timer ----------
+
+  function tick() {
+    var left = Math.max(0, Math.floor((deadline - (Date.now() + offset)) / 1000));
+    var h = Math.floor(left / 3600), m = Math.floor(left % 3600 / 60), s = left % 60;
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    $('ex-timer').textContent = (h ? h + ':' : '') + pad(m) + ':' + pad(s);
+    $('ex-timer').classList.toggle('low', left <= 300);
+    if (left === 0) submit(true);
+  }
+
+  function startTimers() {
+    stopTimers();
+    timers.tick = setInterval(tick, 1000);
+    timers.save = setInterval(function () { save(false); }, AUTOSAVE_MS);
+    tick();
+  }
+
+  function stopTimers() { clearInterval(timers.tick); clearInterval(timers.save); }
+
+  // ---------- tampilan soal ----------
+
+  function answered(q) {
+    var v = st.jawaban[q.question_id];
+    if (v === undefined || v === null || v === '') return false;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === 'object') return Object.keys(v).length > 0;
+    return String(v).trim() !== '';
+  }
+
+  // Tombol dibuat sekali lalu hanya kelasnya yang diperbarui. Mengganti elemen saat
+  // event 'change' (fokus keluar dari isian) membuat klik pada nomor soal hilang.
+  function drawGrid() {
+    var grid = $('ex-grid');
+    if (grid.children.length !== pkg.questions.length) {
+      grid.innerHTML = pkg.questions.map(function (q, i) { return '<button type="button" data-i="' + i + '">' + (i + 1) + '</button>'; }).join('');
+    }
+    pkg.questions.forEach(function (q, i) {
+      grid.children[i].className = (answered(q) ? 'answered ' : '') + (st.ragu[q.question_id] ? 'doubt ' : '') + (i === idx ? 'current' : '');
+    });
+  }
+
+  function drawAnswer(q) {
+    var v = st.jawaban[q.question_id];
+    var box = $('ex-answer');
+    if (q.tipe === 'PG' || q.tipe === 'PGK') {
+      var multi = q.tipe === 'PGK';
+      var picked = multi ? (v || []) : [v];
+      box.innerHTML = '<div class="choices">' + q.opsi.map(function (o, i) {
+        return '<label class="choice"><input type="' + (multi ? 'checkbox' : 'radio') + '" name="ans" value="' + esc(o.id) + '"' +
+          (picked.indexOf(o.id) >= 0 ? ' checked' : '') + '><span class="letter">' + LETTERS.charAt(i) + '</span><span>' + esc(o.teks) + '</span></label>';
+      }).join('') + '</div>';
+    } else if (CHOICES[q.tipe]) {
+      var map = v || {};
+      box.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Pernyataan</th>' + CHOICES[q.tipe].map(function (c) { return '<th>' + c[1] + '</th>'; }).join('') +
+        '</tr></thead><tbody>' + q.opsi.map(function (o) {
+          return '<tr><td>' + esc(o.teks) + '</td>' + CHOICES[q.tipe].map(function (c) {
+            return '<td><input type="radio" name="st-' + esc(o.id) + '" data-sid="' + esc(o.id) + '" value="' + c[0] + '"' + (map[o.id] === c[0] ? ' checked' : '') + ' aria-label="' + c[1] + '"></td>';
+          }).join('') + '</tr>';
+        }).join('') + '</tbody></table></div>';
+    } else if (q.tipe === 'ISIAN') {
+      box.innerHTML = '<input type="text" id="ans-text" autocomplete="off" value="' + esc(v || '') + '" placeholder="Tulis jawaban singkat">';
+    } else {
+      box.innerHTML = '<textarea id="ans-text" style="min-height:200px;font-family:inherit;font-size:15px" placeholder="Tulis jawaban Anda">' + esc(v || '') + '</textarea>';
+    }
+  }
+
+  function show(i) {
+    idx = Math.max(0, Math.min(pkg.questions.length - 1, i));
+    var q = pkg.questions[idx];
+    $('ex-no').textContent = 'Soal ' + (idx + 1) + ' dari ' + pkg.questions.length;
+    $('ex-type').textContent = TYPE_LABEL[q.tipe] || q.tipe;
+    $('ex-bobot').textContent = '';
+    $('ex-text').textContent = q.teks;
+    $('ex-media').innerHTML = q.media_url ? '<p><a href="' + esc(q.media_url) + '" target="_blank" rel="noopener">Buka gambar/media soal</a></p>' : '';
+    drawAnswer(q);
+    $('ex-doubt').checked = !!st.ragu[q.question_id];
+    $('ex-prev').disabled = idx === 0;
+    $('ex-next').textContent = idx === pkg.questions.length - 1 ? 'Selesai' : 'Berikutnya →';
+    drawGrid();
+    document.querySelector('.exam-main').scrollTop = 0;
+    if (window.innerWidth < 800) $('ex-nav').classList.remove('open');
+  }
+
+  function readAnswer() {
+    var q = pkg.questions[idx];
+    var box = $('ex-answer');
+    var v;
+    if (q.tipe === 'PG') { var r = box.querySelector('input:checked'); v = r ? r.value : ''; }
+    else if (q.tipe === 'PGK') { v = Array.prototype.map.call(box.querySelectorAll('input:checked'), function (c) { return c.value; }); }
+    else if (CHOICES[q.tipe]) { v = {}; Array.prototype.forEach.call(box.querySelectorAll('input:checked'), function (c) { v[c.getAttribute('data-sid')] = c.value; }); }
+    else v = $('ans-text').value;
+    st.jawaban[q.question_id] = v;
+    changed();
+  }
+
+  function confirmFinish() {
+    var empty = pkg.questions.filter(function (q) { return !answered(q); }).length;
+    var doubt = pkg.questions.filter(function (q) { return st.ragu[q.question_id]; }).length;
+    var msg = 'Kumpulkan jawaban sekarang? Setelah dikumpulkan jawaban tidak bisa diubah.';
+    if (empty) msg += '\n\n' + empty + ' soal belum dijawab.';
+    if (doubt) msg += '\n' + doubt + ' soal masih ditandai ragu-ragu.';
+    if (ask(confirm, msg)) submit(false);
+  }
+
+  // ---------- event ----------
+
+  $('ex-answer').addEventListener('change', readAnswer);
+  $('ex-answer').addEventListener('input', function (ev) { if (ev.target.id === 'ans-text') readAnswer(); });
+  $('ex-doubt').addEventListener('change', function () {
+    st.ragu[pkg.questions[idx].question_id] = this.checked;
+    persist();
+    drawGrid();
+  });
+  $('ex-prev').addEventListener('click', function () { show(idx - 1); });
+  $('ex-next').addEventListener('click', function () { idx === pkg.questions.length - 1 ? confirmFinish() : show(idx + 1); });
+  $('ex-grid').addEventListener('click', function (ev) { var b = ev.target.closest('button[data-i]'); if (b) show(Number(b.getAttribute('data-i'))); });
+  $('ex-finish').addEventListener('click', confirmFinish);
+  $('ex-nav-toggle').addEventListener('click', function () { $('ex-nav').classList.toggle('open'); });
+  $('ex-back').addEventListener('click', function () { SIULIN.show('dashboard'); SIULIN.openView('my-exams'); });
+
+  // Anti-cheat: setiap kali fokus meninggalkan halaman, hitung dan kirim bersama auto-save.
+  window.addEventListener('blur', function () {
+    if (!pkg || finished || inDialog || $('page-exam').hidden) return;
+    st.tab++;
+    st.seq++;
+    persist();
+    if (Date.now() - lastBlurSave >= BLUR_SAVE_MIN_MS) { lastBlurSave = Date.now(); save(true); }
+  });
+  window.addEventListener('beforeunload', function (ev) {
+    if (pkg && !finished && !$('page-exam').hidden) { ev.preventDefault(); ev.returnValue = ''; }
+  });
+
+  SIULIN.page('exam', {
+    el: 'page-exam',
+    onShow: function (p) {
+      pkg = p;
+      finished = false;
+      offset = Date.parse(pkg.server_now) - Date.now();
+      deadline = Date.parse(pkg.batas_waktu);
+      st = loadState();
+      $('ex-judul').textContent = pkg.test.judul;
+      $('ex-done').hidden = true;
+      $('ex-grid').innerHTML = '';
+      showSaveStatus();
+      show(0);
+      startTimers();
+      if (st.seq > st.savedSeq) save(false);
+    }
+  });
+})();
+</script>

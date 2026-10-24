@@ -56,7 +56,12 @@ var Api = (function () {
     'test.remove':   { permission: 'test.manage', handler: function (ctx, p) { return TestService.remove(ctx, p); } },
 
     'token.list':     { permission: 'token.manage', handler: function (ctx) { return TokenService.list(ctx); } },
-    'token.generate': { permission: 'token.manage', handler: function (ctx, p) { return TokenService.generate(ctx, p); } }
+    'token.generate': { permission: 'token.manage', handler: function (ctx, p) { return TokenService.generate(ctx, p); } },
+
+    'attempt.list':   { permission: 'exam.take', handler: function (ctx) { return ExamEngine.available(ctx); } },
+    'attempt.start':  { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.start(ctx, p); } },
+    'attempt.save':   { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.save(ctx, p); } },
+    'attempt.submit': { permission: 'exam.take', handler: function (ctx, p) { return ExamEngine.submit(ctx, p); } }
   };
 
   function sanitize(payload) {
