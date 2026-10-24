@@ -65,7 +65,12 @@ var Api = (function () {
 
     'result.list':     { permission: 'result.view', handler: function (ctx, p) { return ResultService.list(ctx, p); } },
     'result.detail':   { permission: 'result.view', handler: function (ctx, p) { return ResultService.detail(ctx, p); } },
-    'result.analysis': { permission: 'result.view', handler: function (ctx, p) { return ResultService.analysis(ctx, p); } }
+    'result.analysis': { permission: 'result.view', handler: function (ctx, p) { return ResultService.analysis(ctx, p); } },
+
+    'monitor.tests':  { permission: 'monitor.view', handler: function (ctx) { return MonitorService.tests(ctx); } },
+    'monitor.list':   { permission: 'monitor.view', handler: function (ctx, p) { return MonitorService.list(ctx, p); } },
+    'monitor.extend': { permission: 'monitor.view', handler: function (ctx, p) { return MonitorService.extend(ctx, p); } },
+    'monitor.submit': { permission: 'monitor.view', handler: function (ctx, p) { return MonitorService.forceSubmit(ctx, p); } }
   };
 
   function sanitize(payload) {

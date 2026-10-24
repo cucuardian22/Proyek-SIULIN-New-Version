@@ -20,8 +20,9 @@ Tahap 1, bagian fondasi:
 
 - Mesin ujian (`service/ExamEngine.gs`): siswa masuk dengan token, soal/opsi diacak per siswa tanpa kunci terkirim ke browser, timer dari jam server, tanda ragu-ragu, simpan otomatis tiap 60 detik dan saat pindah tab, lanjut setelah browser tertutup, kumpul otomatis saat waktu habis (trigger tiap 10 menit), nilai dihitung saat submit
 - Rekap nilai per tes (`service/ResultService.gs`): status dan nilai tiap siswa peserta, ketuntasan terhadap KKM, ringkasan rata-rata/tertinggi/terendah, filter kelas, unduh CSV, jawaban siswa per soal beserta kunci, dan analisis butir soal (tingkat benar, sebaran pilihan PG/PGK). Ujian yang waktunya habis langsung dikumpulkan saat rekap dibuka.
+- Monitoring tes berjalan (`service/MonitorService.gs`) untuk PENGAWAS, GURU, dan ADMIN: status tiap siswa, jumlah soal terjawab, sisa waktu, simpan terakhir, tanda "mungkin terputus", jumlah pindah tab, diperbarui tiap 30 detik. Pengawas bisa menambah waktu satu siswa (timer siswa ikut berubah dalam 1 menit) dan mengumpulkan paksa (yang dinilai simpanan otomatis terakhir). Progres dibaca dari cache, bukan sheet, supaya ringan.
 
-Berikutnya: monitoring pengawas, uji beban.
+Berikutnya: uji beban di Apps Script sungguhan.
 
 ## Struktur
 
@@ -44,12 +45,12 @@ src/
     service/       logika bisnis murni
       ScoringService.gs, SchoolService.gs, UserService.gs,
       TopicService.gs, ExamService.gs, QuestionService.gs,
-      TestService.gs, TokenService.gs, ExamEngine.gs, ResultService.gs
+      TestService.gs, TokenService.gs, ExamEngine.gs, ResultService.gs, MonitorService.gs
   client/
     Index.html, Style.html, Core.js.html (callApi, sesi, navigasi, CSV)
     pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html,
     pages/Topics.html, pages/Exams.html, pages/Questions.html,
-    pages/Tests.html, pages/Tokens.html, pages/Results.html, pages/MyExams.html, pages/Exam.html
+    pages/Tests.html, pages/Tokens.html, pages/Results.html, pages/Monitoring.html, pages/MyExams.html, pages/Exam.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
 ```
 

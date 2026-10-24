@@ -14,6 +14,8 @@
 var ExamEngine = (function () {
   var SAVE_GRACE_SECONDS = 120;  // toleransi koneksi lambat setelah batas waktu
   var CACHE_SECONDS = 6 * 60 * 60;
+  var AUTO_SUBMIT_SLACK_SECONDS = 15;  // selisih jam perangkat yang masih dianggap "waktu habis"
+  var MAX_EXTEND_MINUTES = 60;
   var SYSTEM = { system: true };
 
   function nowMs() { return Platform.now().getTime(); }
@@ -41,6 +43,29 @@ var ExamEngine = (function () {
     if (!a || a.user_id !== ctx.userId || a.school_id !== ctx.schoolId) Utils.fail('NOT_FOUND', 'Sesi ujian tidak ditemukan.');
     if (!cached) cacheAttempt(a);
     return a;
+  }
+
+  // Ringkasan progres untuk monitoring pengawas, disimpan di cache agar monitoring tidak membaca AnswerBatches.
+  function progressKey(id) { return 'prog:' + id; }
+
+  function countAnswered(jawaban) {
+    return Object.keys(jawaban).filter(function (k) {
+      var v = jawaban[k];
+      if (v === null || v === undefined || v === '') return false;
+      if (Array.isArray(v)) return v.length > 0;
+      if (typeof v === 'object') return Object.keys(v).length > 0;
+      return String(v).trim() !== '';
+    }).length;
+  }
+
+  /** { attempt_id: {seq, terjawab, pindah_tab, ts} } untuk attempt yang pernah auto-save sejak cache terakhir hilang. */
+  function progressOf(attemptIds) {
+    if (!attemptIds.length) return {};
+    var raw = {};
+    try { raw = Platform.cache().getAll(attemptIds.map(progressKey)) || {}; } catch (e) { return {}; }
+    var out = {};
+    attemptIds.forEach(function (id) { if (raw[progressKey(id)]) out[id] = JSON.parse(raw[progressKey(id)]); });
+    return out;
   }
 
   function expired(a) { return nowMs() > Date.parse(a.batas_waktu) + SAVE_GRACE_SECONDS * 1000; }
@@ -225,12 +250,26 @@ var ExamEngine = (function () {
       jumlah_pindah_tab: Number(payload.jumlah_pindah_tab) || 0,
       client_ts: String(payload.client_ts || '').slice(0, 40), server_ts: Utils.nowIso()
     });
-    return { saved_seq: Number(payload.seq) || 0, server_now: Utils.nowIso() };
+    try {
+      Platform.cache().put(progressKey(a.attempt_id), JSON.stringify({
+        seq: Number(payload.seq) || 0, terjawab: countAnswered(jawaban),
+        pindah_tab: Number(payload.jumlah_pindah_tab) || 0, ts: Utils.nowIso()
+      }), CACHE_SECONDS);
+    } catch (e) { /* monitoring saja */ }
+    // batas_waktu ikut dikirim supaya timer siswa ikut berubah bila pengawas menambah waktu.
+    return { saved_seq: Number(payload.seq) || 0, server_now: Utils.nowIso(), batas_waktu: a.batas_waktu };
   }
 
-  /** Kumpulkan jawaban akhir dan nilai. Aman dipanggil ulang (hasil yang sama). */
+  /**
+   * Kumpulkan jawaban akhir dan nilai. Aman dipanggil ulang (hasil yang sama).
+   * payload.auto = true dikirim saat timer siswa habis: bila pengawas sudah menambah waktu,
+   * attempt tidak dikumpulkan dan batas waktu baru dikembalikan.
+   */
   function submit(ctx, payload) {
     var a = loadAttempt(ctx, payload.attempt_ref);
+    if (payload.auto && a.status === 'PROGRESS' && nowMs() < Date.parse(a.batas_waktu) - AUTO_SUBMIT_SLACK_SECONDS * 1000) {
+      return { status: 'PROGRESS', batas_waktu: a.batas_waktu, server_now: Utils.nowIso() };
+    }
     if (a.status === 'PROGRESS' && !expired(a)) {
       var jawaban = payload.jawaban && typeof payload.jawaban === 'object' && !Array.isArray(payload.jawaban) ? payload.jawaban : {};
       save(ctx, { attempt_ref: a.attempt_id, seq: payload.seq, jawaban: jawaban, jumlah_pindah_tab: payload.jumlah_pindah_tab, client_ts: payload.client_ts });
@@ -259,9 +298,43 @@ var ExamEngine = (function () {
     return done;
   }
 
+  // ---------- tindakan pengawas (hak akses dicek MonitorService) ----------
+
+  function openAttempt(attemptId) {
+    var a = Repos.attempts().findById(SYSTEM, attemptId);
+    if (!a) Utils.fail('NOT_FOUND', 'Data pengerjaan tidak ditemukan.');
+    if (a.status !== 'PROGRESS') Utils.fail('DONE', 'Siswa ini sudah selesai.');
+    if (expired(a)) {
+      finalize(SYSTEM, a, null, null, 'TIMEOUT');
+      Utils.fail('DONE', 'Waktu siswa ini sudah habis dan jawabannya sudah dikumpulkan.');
+    }
+    return a;
+  }
+
+  /** Tambah waktu satu siswa. Timer siswa ikut berubah pada auto-save berikutnya (paling lama 1 menit). */
+  function extend(attemptId, minutes) {
+    minutes = Number(minutes);
+    if (!(minutes >= 1 && minutes <= MAX_EXTEND_MINUTES) || Math.floor(minutes) !== minutes) {
+      Utils.fail('INVALID_INPUT', 'Tambahan waktu 1 sampai ' + MAX_EXTEND_MINUTES + ' menit.');
+    }
+    var a = openAttempt(attemptId);
+    var batas = new Date(Math.max(Date.parse(a.batas_waktu), nowMs()) + minutes * 60000).toISOString();
+    var updated = Repos.attempts().update(SYSTEM, a.attempt_id, { batas_waktu: batas });
+    cacheAttempt(updated);
+    return updated;
+  }
+
+  /** Kumpulkan paksa: yang dinilai adalah auto-save terakhir siswa. */
+  function forceSubmit(attemptId) {
+    var a = openAttempt(attemptId);
+    finalize(SYSTEM, a, null, null, 'SUBMITTED');
+    return Repos.attempts().findById(SYSTEM, a.attempt_id);
+  }
+
   return {
     SAVE_GRACE_SECONDS: SAVE_GRACE_SECONDS,
-    available: available, start: start, save: save, submit: submit, finalizeExpired: finalizeExpired
+    available: available, start: start, save: save, submit: submit, finalizeExpired: finalizeExpired,
+    progressOf: progressOf, extend: extend, forceSubmit: forceSubmit
   };
 })();
 
