@@ -102,9 +102,13 @@ function setupTriggers() {
  */
 function setupLoadTest() {
   var props = PropertiesService.getScriptProperties();
+  // Nilai Script Property sering ikut tersalin dengan spasi, tanda petik, atau keterangan: ambil angka pertama.
+  var rawStudents = String(props.getProperty('LOADTEST_STUDENTS') || '200');
+  var students = Number((rawStudents.match(/\d+/) || [''])[0]);
+  if (!students) throw new Error('LOADTEST_STUDENTS harus berupa angka, mis. 600. Isi sekarang: "' + rawStudents + '".');
   var info = LoadTest.prepare({
-    students: Number(props.getProperty('LOADTEST_STUDENTS') || 200),
-    password: props.getProperty('LOADTEST_PASSWORD') || ''
+    students: students,
+    password: String(props.getProperty('LOADTEST_PASSWORD') || '').trim().replace(/^["'`]+|["'`]+$/g, '')
   });
   props.setProperty('LOADTEST_ENABLED', 'true');
   Logger.log('Uji beban siap. Kode sekolah ' + info.kode_sekolah + ', siswa ub001 s.d. ub' +
