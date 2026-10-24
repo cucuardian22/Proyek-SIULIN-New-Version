@@ -1,12 +1,14 @@
 /**
  * Mesin ujian untuk SISWA: daftar tes, mulai dengan token, paket soal, auto-save, submit.
  *
- * Beban dijaga sekecil mungkin karena inilah bagian yang dipanggil serentak:
- *  - Paket soal dikirim sekali saat mulai/lanjut, tanpa kunci jawaban.
- *  - Auto-save hanya menambah satu baris AnswerBatches (append), tanpa membaca sheet;
- *    data attempt diambil dari CacheService.
- *  - Penilaian dilakukan sekali saat submit, atau oleh finalizeExpiredAttempts()
- *    (trigger berkala) untuk attempt yang waktunya habis tanpa submit.
+ * Bagian ini dipanggil serentak oleh ratusan siswa, jadi tidak ada jalur siswa yang memakai
+ * kunci global (LockService). Semua penulisan berupa satu appendRow, yang atomik:
+ *  - Mulai: satu baris Attempts. attempt_id diturunkan dari test_id + user_id dan urutan acak
+ *    diturunkan dari attempt_id, jadi dua klik "Mulai" bersamaan menghasilkan attempt yang sama.
+ *  - Auto-save: selalu ke cache ('ans:'), ke sheet AnswerBatches paling sering tiap
+ *    Config.SAVE_SHEET_SECONDS. Lanjut di perangkat lain membaca cache dulu, lalu sheet.
+ *  - Submit: satu baris Answers (semua jawaban + skor) dan satu baris Results. Baris Results
+ *    menandai attempt sudah ditutup; status di Attempts disalin oleh trigger berkala (syncClosed).
  *
  * urutan_soal di Attempts: [{ q: question_id, o: [id opsi sesuai tampilan] | null }].
  * Jawaban selalu memakai id opsi asli, jadi pengacakan hanya memengaruhi tampilan.
@@ -20,33 +22,111 @@ var ExamEngine = (function () {
 
   function nowMs() { return Platform.now().getTime(); }
 
-  function shuffle(list) {
+  /** Angka acak 0..1 yang selalu sama untuk seed yang sama (mulberry32). */
+  function seededRandom(seedHex) {
+    var a = parseInt(String(seedHex).replace(/[^0-9a-f]/gi, '').slice(0, 8) || '1', 16) >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function shuffle(list, rand) {
     var a = list.slice();
     for (var i = a.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
+      var j = Math.floor(rand() * (i + 1));
       var t = a[i]; a[i] = a[j]; a[j] = t;
     }
     return a;
   }
 
-  // ---------- attempt + cache ----------
+  /** Satu siswa, satu tes, satu attempt_id: dua permintaan "Mulai" bersamaan menulis attempt yang sama. */
+  function attemptIdFor(testId, userId) {
+    return Platform.hmacSha256Hex('siulin-attempt', testId + ':' + userId).slice(0, 32);
+  }
+
+  // ---------- cache ----------
 
   function cacheKey(id) { return 'att:' + id; }
+  function progressKey(id) { return 'prog:' + id; }  // ringkasan untuk monitoring pengawas
+  function savedKey(id) { return 'ans:' + id; }      // auto-save terakhir (seluruh jawaban)
+  function resultKey(id) { return 'res:' + id; }     // penanda attempt sudah ditutup
+
+  function cacheGet(key) {
+    try { var v = Platform.cache().get(key); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+  }
+
+  function cachePut(obj) {
+    var text = {};
+    Object.keys(obj).forEach(function (k) { text[k] = JSON.stringify(obj[k]); });
+    try { Platform.cache().putAll(text, CACHE_SECONDS); return true; } catch (e) { return false; }
+  }
 
   function cacheAttempt(a) {
-    try { Platform.cache().put(cacheKey(a.attempt_id), JSON.stringify(a), CACHE_SECONDS); } catch (e) { /* cache opsional */ }
+    var o = {};
+    o[cacheKey(a.attempt_id)] = a;
+    cachePut(o);
   }
+
+  // ---------- status attempt (baris Results = sudah ditutup) ----------
+
+  /** { attempt_id: result } dengan baris paling awal bila ada submit ganda. */
+  function closedResults(filter) {
+    var map = {};
+    Repos.results().findMany(SYSTEM, filter || {}).forEach(function (r) {
+      var prev = map[r.attempt_id];
+      if (!prev || r.created_at < prev.created_at) map[r.attempt_id] = r;
+    });
+    return map;
+  }
+
+  function resultOf(attemptId) {
+    return cacheGet(resultKey(attemptId)) || closedResults({ attempt_id: attemptId })[attemptId] || null;
+  }
+
+  /** Salinan attempt dengan status dari Results (Attempts di sheet bisa tertinggal sampai trigger berjalan). */
+  function applyResult(a, r) {
+    if (!r) return a;
+    var out = {};
+    for (var k in a) out[k] = a[k];
+    out.status = r.status;
+    out.selesai = r.selesai;
+    out.jumlah_pindah_tab = Math.max(Number(r.jumlah_pindah_tab) || 0, Number(a.jumlah_pindah_tab) || 0);
+    return out;
+  }
+
+  /** Attempt unik per id (baris pertama), urut dari yang paling awal. */
+  function uniqueAttempts(list) {
+    var seen = {};
+    return list.filter(function (a) {
+      if (seen[a.attempt_id]) return false;
+      seen[a.attempt_id] = true;
+      return true;
+    }).sort(function (x, y) { return (x.created_at + x.attempt_id).localeCompare(y.created_at + y.attempt_id); });
+  }
+
+  /** Attempts dengan status terkini. Results hanya dibaca bila ada attempt yang masih PROGRESS di sheet. */
+  function withResults(list, results) {
+    if (!results && !list.some(function (a) { return a.status === 'PROGRESS'; })) return list;
+    results = results || closedResults();
+    return list.map(function (a) { return a.status === 'PROGRESS' ? applyResult(a, results[a.attempt_id]) : a; });
+  }
+
+  function owns(ctx, a) { return a && a.user_id === ctx.userId && a.school_id === ctx.schoolId; }
 
   function loadAttempt(ctx, attemptId) {
-    var cached = Platform.cache().get(cacheKey(attemptId));
-    var a = cached ? JSON.parse(cached) : Repos.attempts().findById(ctx, attemptId);
-    if (!a || a.user_id !== ctx.userId || a.school_id !== ctx.schoolId) Utils.fail('NOT_FOUND', 'Sesi ujian tidak ditemukan.');
-    if (!cached) cacheAttempt(a);
+    var a = cacheGet(cacheKey(attemptId));
+    if (!a) {
+      a = Repos.attempts().findById(ctx, attemptId);
+      if (a && a.status === 'PROGRESS') a = applyResult(a, resultOf(a.attempt_id));
+      if (owns(ctx, a)) cacheAttempt(a);
+    }
+    if (!owns(ctx, a)) Utils.fail('NOT_FOUND', 'Sesi ujian tidak ditemukan.');
     return a;
   }
-
-  // Ringkasan progres untuk monitoring pengawas, disimpan di cache agar monitoring tidak membaca AnswerBatches.
-  function progressKey(id) { return 'prog:' + id; }
 
   function countAnswered(jawaban) {
     return Object.keys(jawaban).filter(function (k) {
@@ -73,9 +153,7 @@ var ExamEngine = (function () {
   function myAttempts(ctx, testId) {
     var filter = { user_id: ctx.userId };
     if (testId) filter.test_id = testId;
-    return Repos.attempts().findMany(ctx, filter).sort(function (x, y) {
-      return (x.created_at + x.attempt_id).localeCompare(y.created_at + y.attempt_id);
-    });
+    return withResults(uniqueAttempts(Repos.attempts().findMany(ctx, filter)));
   }
 
   function me(ctx) {
@@ -99,23 +177,28 @@ var ExamEngine = (function () {
     return map;
   }
 
-  function buildOrder(test) {
+  function buildOrder(test, attemptId) {
+    var rand = seededRandom(attemptId);
     var qs = Repos.questions().findMany(SYSTEM, { exam_id: test.exam_id }).sort(function (a, b) {
-      return a.created_at.localeCompare(b.created_at);
+      return (a.created_at + a.question_id).localeCompare(b.created_at + b.question_id);
     });
     if (!qs.length) Utils.fail('INVALID_INPUT', 'Tes ini belum punya soal. Hubungi guru.');
-    if (test.acak_soal) qs = shuffle(qs);
+    if (test.acak_soal) qs = shuffle(qs, rand);
     return qs.map(function (q) {
       var shuffleOptions = test.acak_opsi && (q.tipe === 'PG' || q.tipe === 'PGK');
-      return { q: q.question_id, o: shuffleOptions ? shuffle(q.opsi.map(function (o) { return o.id; })) : null };
+      return { q: q.question_id, o: shuffleOptions ? shuffle(q.opsi.map(function (o) { return o.id; }), rand) : null };
     });
   }
 
-  function latestBatch(ctx, attemptId) {
-    return Repos.answerBatches().findMany(ctx, { attempt_id: attemptId }).sort(function (a, b) { return b.seq - a.seq; })[0] || null;
+  /** Auto-save terakhir: cache dulu (selalu paling baru), lalu sheet AnswerBatches. */
+  function latestSaved(attemptId) {
+    var c = cacheGet(savedKey(attemptId));
+    if (c) return { seq: c.seq, jawaban: c.jawaban || {}, jumlah_pindah_tab: c.jumlah_pindah_tab || 0 };
+    var b = Repos.answerBatches().findMany(SYSTEM, { attempt_id: attemptId }).sort(function (x, y) { return y.seq - x.seq; })[0];
+    return b ? { seq: b.seq, jawaban: b.jawaban_json || {}, jumlah_pindah_tab: b.jumlah_pindah_tab || 0 } : null;
   }
 
-  function packageFor(ctx, attempt, test) {
+  function packageFor(attempt, test, saved) {
     var map = questionsById(attempt.urutan_soal.map(function (u) { return u.q; }));
     var questions = attempt.urutan_soal.map(function (u) {
       var q = map[u.q];
@@ -129,48 +212,54 @@ var ExamEngine = (function () {
       return { question_id: q.question_id, tipe: q.tipe, teks: q.teks, media_url: q.media_url, bobot: q.bobot,
         opsi: opsi.map(function (o) { return { id: o.id, teks: o.teks }; }) };
     });
-    var saved = latestBatch(ctx, attempt.attempt_id);
     return {
       attempt_id: attempt.attempt_id,
       test: { test_id: test.test_id, judul: test.judul, durasi_menit: test.durasi_menit },
       batas_waktu: attempt.batas_waktu,
       server_now: Utils.nowIso(),
       questions: questions,
-      saved: saved ? { seq: saved.seq, jawaban: saved.jawaban_json || {}, jumlah_pindah_tab: saved.jumlah_pindah_tab || 0 } : null
+      saved: saved || null
     };
   }
 
   // ---------- penilaian ----------
 
-  /** Nilai dan tutup attempt. jawaban null = pakai auto-save terakhir. */
-  function finalize(ctx, attempt, jawaban, pindahTab, status) {
-    var existing = Repos.results().findById(SYSTEM, attempt.attempt_id);
+  /**
+   * Nilai dan tutup attempt dengan dua appendRow tanpa kunci (Answers lalu Results).
+   * jawaban null = pakai auto-save terakhir. Mengembalikan baris Results yang berlaku.
+   */
+  function finalize(attempt, jawaban, pindahTab, status) {
+    var existing = resultOf(attempt.attempt_id);
     if (existing) return existing;
     if (jawaban === null) {
-      var batch = latestBatch(SYSTEM, attempt.attempt_id);
-      jawaban = batch ? batch.jawaban_json || {} : {};
-      if (pindahTab === null) pindahTab = batch ? batch.jumlah_pindah_tab || 0 : attempt.jumlah_pindah_tab || 0;
+      var saved = latestSaved(attempt.attempt_id);
+      jawaban = saved ? saved.jawaban : {};
+      if (pindahTab === null) pindahTab = saved ? saved.jumlah_pindah_tab : 0;
     }
     var map = questionsById(attempt.urutan_soal.map(function (u) { return u.q; }));
     var questions = attempt.urutan_soal.map(function (u) { return map[u.q]; }).filter(Boolean);
     var score = ScoringService.scoreAttempt(questions, jawaban);
-    var now = Utils.nowIso();
+    var skor = {};
+    var final = {};
+    score.items.forEach(function (item) {
+      skor[item.question_id] = item.skor;
+      if (jawaban[item.question_id] !== undefined) final[item.question_id] = jawaban[item.question_id];
+    });
 
-    Repos.answers().insertMany(SYSTEM, score.items.map(function (item) {
-      return {
-        attempt_id: attempt.attempt_id, school_id: attempt.school_id, question_id: item.question_id,
-        jawaban: jawaban[item.question_id] === undefined ? null : jawaban[item.question_id], waktu_simpan: now, skor: item.skor
-      };
-    }));
+    Repos.answers().insert(SYSTEM, {
+      attempt_id: attempt.attempt_id, test_id: attempt.test_id, school_id: attempt.school_id, jawaban: final, skor: skor
+    });
     var result = Repos.results().insert(SYSTEM, {
       attempt_id: attempt.attempt_id, test_id: attempt.test_id, school_id: attempt.school_id, user_id: attempt.user_id,
+      status: status, selesai: Utils.nowIso(),
+      jumlah_pindah_tab: Math.max(Number(pindahTab) || 0, Number(attempt.jumlah_pindah_tab) || 0),
       skor_otomatis: score.skor_otomatis, skor_uraian: null, nilai_akhir: score.nilai,
       status_koreksi: score.perlu_koreksi ? 'MENUNGGU' : 'SELESAI'
     });
-    var closed = Repos.attempts().update(SYSTEM, attempt.attempt_id, {
-      status: status, selesai: now, jumlah_pindah_tab: Math.max(Number(pindahTab) || 0, attempt.jumlah_pindah_tab || 0)
-    });
-    cacheAttempt(closed);
+    var o = {};
+    o[resultKey(attempt.attempt_id)] = result;
+    o[cacheKey(attempt.attempt_id)] = applyResult(attempt, result);
+    cachePut(o);
     return result;
   }
 
@@ -181,7 +270,7 @@ var ExamEngine = (function () {
     var user = me(ctx);
     var attempts = {};
     myAttempts(ctx).forEach(function (a) {
-      if (a.status === 'PROGRESS' && expired(a)) a = Repos.attempts().findById(ctx, finalize(ctx, a, null, null, 'TIMEOUT').attempt_id);
+      if (a.status === 'PROGRESS' && expired(a)) a = applyResult(a, finalize(a, null, null, 'TIMEOUT'));
       if (!attempts[a.test_id]) attempts[a.test_id] = a;
     });
     return Repos.tests().findMany(ctx).filter(function (t) {
@@ -206,15 +295,17 @@ var ExamEngine = (function () {
     var user = me(ctx);
     if (!isParticipant(test, user)) Utils.fail('FORBIDDEN', 'Tes ini bukan untuk kelas Anda.');
 
-    var current = myAttempts(ctx, test.test_id)[0];
+    var id = attemptIdFor(test.test_id, ctx.userId);
+    var cached = cacheGet(cacheKey(id));
+    var current = owns(ctx, cached) ? cached : myAttempts(ctx, test.test_id)[0];
     if (current) {
       if (current.status !== 'PROGRESS') Utils.fail('DONE', 'Anda sudah menyelesaikan tes ini.');
       if (expired(current)) {
-        finalize(ctx, current, null, null, 'TIMEOUT');
+        finalize(current, null, null, 'TIMEOUT');
         Utils.fail('DONE', 'Waktu mengerjakan sudah habis. Jawaban tersimpan terakhir sudah dikumpulkan.');
       }
       cacheAttempt(current);
-      return packageFor(ctx, current, test);
+      return packageFor(current, test, latestSaved(current.attempt_id));
     }
 
     var status = TestService.statusOf(test);
@@ -223,41 +314,54 @@ var ExamEngine = (function () {
     if (!TokenService.verify(ctx, test.test_id, payload.token)) Utils.fail('BAD_TOKEN', 'Token salah atau sudah tidak berlaku.');
 
     var batas = Math.min(nowMs() + test.durasi_menit * 60000, Date.parse(test.selesai));
-    Repos.attempts().insert(ctx, {
-      test_id: test.test_id, user_id: ctx.userId, mulai: Utils.nowIso(), batas_waktu: new Date(batas).toISOString(),
-      selesai: '', status: 'PROGRESS', urutan_soal: buildOrder(test),
+    var created = Repos.attempts().insert(ctx, {
+      attempt_id: id, test_id: test.test_id, user_id: ctx.userId, mulai: Utils.nowIso(), batas_waktu: new Date(batas).toISOString(),
+      selesai: '', status: 'PROGRESS', urutan_soal: buildOrder(test, id),
       ip_ua: String(payload.user_agent || '').slice(0, 300), jumlah_pindah_tab: 0
     });
-    // Dua klik "Mulai" yang bersamaan bisa membuat dua attempt: pakai yang paling awal, hapus sisanya.
-    var all = myAttempts(ctx, test.test_id);
-    all.slice(1).forEach(function (dupe) { Repos.attempts().softDelete(ctx, dupe.attempt_id); });
-    cacheAttempt(all[0]);
-    return packageFor(ctx, all[0], test);
+    cacheAttempt(created);
+    return packageFor(created, test, null);
+  }
+
+  function cleanAnswers(jawaban) {
+    jawaban = jawaban && typeof jawaban === 'object' && !Array.isArray(jawaban) ? jawaban : {};
+    if (JSON.stringify(jawaban).length > 45000) Utils.fail('INVALID_INPUT', 'Jawaban terlalu panjang.');
+    return jawaban;
   }
 
   /**
-   * Auto-save: tambahkan satu baris berisi seluruh jawaban saat ini.
+   * Auto-save: seluruh jawaban saat ini ke cache, dan ke sheet AnswerBatches bila simpanan sheet
+   * terakhir sudah lebih lama dari Config.SAVE_SHEET_SECONDS (atau cache gagal/hilang).
    * @param {{attempt_ref, seq:number, jawaban:Object, jumlah_pindah_tab:number, client_ts?:string}} payload
    */
   function save(ctx, payload) {
     var a = loadAttempt(ctx, payload.attempt_ref);
     if (a.status !== 'PROGRESS') Utils.fail('DONE', 'Tes sudah dikumpulkan.');
     if (expired(a)) Utils.fail('TIME_UP', 'Waktu mengerjakan sudah habis.');
-    var jawaban = payload.jawaban && typeof payload.jawaban === 'object' && !Array.isArray(payload.jawaban) ? payload.jawaban : {};
-    if (JSON.stringify(jawaban).length > 45000) Utils.fail('INVALID_INPUT', 'Jawaban terlalu panjang.');
-    Repos.answerBatches().insert(ctx, {
-      attempt_id: a.attempt_id, seq: Number(payload.seq) || 0, jawaban_json: jawaban,
-      jumlah_pindah_tab: Number(payload.jumlah_pindah_tab) || 0,
-      client_ts: String(payload.client_ts || '').slice(0, 40), server_ts: Utils.nowIso()
-    });
-    try {
-      Platform.cache().put(progressKey(a.attempt_id), JSON.stringify({
-        seq: Number(payload.seq) || 0, terjawab: countAnswered(jawaban),
-        pindah_tab: Number(payload.jumlah_pindah_tab) || 0, ts: Utils.nowIso()
-      }), CACHE_SECONDS);
-    } catch (e) { /* monitoring saja */ }
+    var jawaban = cleanAnswers(payload.jawaban);
+    var seq = Number(payload.seq) || 0;
+    var tab = Number(payload.jumlah_pindah_tab) || 0;
+    var now = Utils.nowIso();
+    var reply = { saved_seq: seq, server_now: now, batas_waktu: a.batas_waktu };
+
+    var prev = cacheGet(savedKey(a.attempt_id));
+    if (prev && prev.seq > seq) return reply; // simpanan lama yang datang terlambat
+
+    var toSheet = !prev || !prev.sheet_ts || nowMs() - Date.parse(prev.sheet_ts) >= Config.SAVE_SHEET_SECONDS * 1000;
+    if (toSheet) writeBatch(a, seq, jawaban, tab, payload.client_ts, now);
+    var o = {};
+    o[savedKey(a.attempt_id)] = { seq: seq, jawaban: jawaban, jumlah_pindah_tab: tab, ts: now, sheet_ts: toSheet ? now : prev.sheet_ts };
+    o[progressKey(a.attempt_id)] = { seq: seq, terjawab: countAnswered(jawaban), pindah_tab: tab, ts: now };
+    if (!cachePut(o) && !toSheet) writeBatch(a, seq, jawaban, tab, payload.client_ts, now); // cache gagal: jangan sampai hilang
     // batas_waktu ikut dikirim supaya timer siswa ikut berubah bila pengawas menambah waktu.
-    return { saved_seq: Number(payload.seq) || 0, server_now: Utils.nowIso(), batas_waktu: a.batas_waktu };
+    return reply;
+  }
+
+  function writeBatch(a, seq, jawaban, tab, clientTs, now) {
+    Repos.answerBatches().insert(SYSTEM, {
+      attempt_id: a.attempt_id, school_id: a.school_id, seq: seq, jawaban_json: jawaban, jumlah_pindah_tab: tab,
+      client_ts: String(clientTs || '').slice(0, 40), server_ts: now
+    });
   }
 
   /**
@@ -270,32 +374,40 @@ var ExamEngine = (function () {
     if (payload.auto && a.status === 'PROGRESS' && nowMs() < Date.parse(a.batas_waktu) - AUTO_SUBMIT_SLACK_SECONDS * 1000) {
       return { status: 'PROGRESS', batas_waktu: a.batas_waktu, server_now: Utils.nowIso() };
     }
-    if (a.status === 'PROGRESS' && !expired(a)) {
-      var jawaban = payload.jawaban && typeof payload.jawaban === 'object' && !Array.isArray(payload.jawaban) ? payload.jawaban : {};
-      save(ctx, { attempt_ref: a.attempt_id, seq: payload.seq, jawaban: jawaban, jumlah_pindah_tab: payload.jumlah_pindah_tab, client_ts: payload.client_ts });
-      finalize(ctx, a, jawaban, payload.jumlah_pindah_tab, 'SUBMITTED');
-    } else if (a.status === 'PROGRESS') {
-      // Terlambat: yang dinilai adalah auto-save terakhir sebelum batas waktu.
-      finalize(ctx, a, null, null, 'TIMEOUT');
-    }
-    var fresh = Repos.attempts().findById(ctx, a.attempt_id);
-    return { status: fresh.status, selesai: fresh.selesai };
+    if (a.status !== 'PROGRESS') return { status: a.status, selesai: a.selesai };
+    var r = expired(a)
+      ? finalize(a, null, null, 'TIMEOUT') // terlambat: yang dinilai adalah auto-save terakhir sebelum batas waktu
+      : finalize(a, cleanAnswers(payload.jawaban), payload.jumlah_pindah_tab, 'SUBMITTED');
+    return { status: r.status, selesai: r.selesai };
   }
 
   /**
-   * Dipanggil trigger berkala: kumpulkan attempt yang waktunya habis tanpa submit.
-   * testId opsional: hanya untuk satu tes (dipakai rekap nilai sebelum menampilkan hasil).
+   * Kumpulkan attempt yang waktunya habis tanpa submit.
+   * testId opsional: hanya untuk satu tes (dipakai rekap nilai dan monitoring sebelum menampilkan hasil).
    */
   function finalizeExpired(testId) {
     var done = 0;
     var filter = { status: 'PROGRESS' };
     if (testId) filter.test_id = testId;
-    Repos.attempts().findMany(SYSTEM, filter).forEach(function (a) {
-      if (!expired(a)) return;
-      try { finalize(SYSTEM, a, null, null, 'TIMEOUT'); done++; }
+    var open = uniqueAttempts(Repos.attempts().findMany(SYSTEM, filter)).filter(expired);
+    if (!open.length) return 0;
+    withResults(open, closedResults(testId ? { test_id: testId } : {})).forEach(function (a) {
+      if (a.status !== 'PROGRESS') return;
+      try { finalize(a, null, null, 'TIMEOUT'); done++; }
       catch (e) { Utils.log('error', 'finalize gagal', { attempt_id: a.attempt_id, error: String(e) }); }
     });
     return done;
+  }
+
+  /** Salin status dari Results ke Attempts dengan satu kunci (trigger berkala). */
+  function syncClosed() {
+    var results = closedResults();
+    var patches = {};
+    uniqueAttempts(Repos.attempts().findMany(SYSTEM, { status: 'PROGRESS' })).forEach(function (a) {
+      var r = results[a.attempt_id];
+      if (r) patches[a.attempt_id] = { status: r.status, selesai: r.selesai, jumlah_pindah_tab: applyResult(a, r).jumlah_pindah_tab };
+    });
+    return Repos.attempts().updateMany(SYSTEM, patches);
   }
 
   // ---------- tindakan pengawas (hak akses dicek MonitorService) ----------
@@ -303,9 +415,10 @@ var ExamEngine = (function () {
   function openAttempt(attemptId) {
     var a = Repos.attempts().findById(SYSTEM, attemptId);
     if (!a) Utils.fail('NOT_FOUND', 'Data pengerjaan tidak ditemukan.');
+    a = applyResult(a, resultOf(a.attempt_id));
     if (a.status !== 'PROGRESS') Utils.fail('DONE', 'Siswa ini sudah selesai.');
     if (expired(a)) {
-      finalize(SYSTEM, a, null, null, 'TIMEOUT');
+      finalize(a, null, null, 'TIMEOUT');
       Utils.fail('DONE', 'Waktu siswa ini sudah habis dan jawabannya sudah dikumpulkan.');
     }
     return a;
@@ -327,20 +440,22 @@ var ExamEngine = (function () {
   /** Kumpulkan paksa: yang dinilai adalah auto-save terakhir siswa. */
   function forceSubmit(attemptId) {
     var a = openAttempt(attemptId);
-    finalize(SYSTEM, a, null, null, 'SUBMITTED');
-    return Repos.attempts().findById(SYSTEM, a.attempt_id);
+    return applyResult(a, finalize(a, null, null, 'SUBMITTED'));
   }
 
   return {
     SAVE_GRACE_SECONDS: SAVE_GRACE_SECONDS,
-    available: available, start: start, save: save, submit: submit, finalizeExpired: finalizeExpired,
-    progressOf: progressOf, extend: extend, forceSubmit: forceSubmit
+    available: available, start: start, save: save, submit: submit, finalizeExpired: finalizeExpired, syncClosed: syncClosed,
+    progressOf: progressOf, closedResults: closedResults, applyResult: applyResult, uniqueAttempts: uniqueAttempts,
+    extend: extend, forceSubmit: forceSubmit
   };
 })();
 
 /** Target trigger berkala (dipasang oleh setupTriggers di Setup.gs). */
 function finalizeExpiredAttempts() {
-  return ExamEngine.finalizeExpired();
+  var done = ExamEngine.finalizeExpired();
+  ExamEngine.syncClosed();
+  return done;
 }
 
 if (typeof module !== 'undefined') module.exports = ExamEngine;

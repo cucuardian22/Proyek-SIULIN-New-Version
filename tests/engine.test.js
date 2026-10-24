@@ -76,13 +76,25 @@ test('auto-save lalu lanjut di perangkat lain tanpa token, jawaban terakhir kemb
   const kode = openTest(env);
   const pkg = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
   const pg = pkg.questions.find((q) => q.tipe === 'PG');
+  const batches = () => Repos.answerBatches().findMany(Auth.SYSTEM, { attempt_id: pkg.attempt_id }).length;
   ok(call(env.ani, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 1, jawaban: { [pg.question_id]: 'A' }, jumlah_pindah_tab: 0 }));
   ok(call(env.ani, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 2, jawaban: { [pg.question_id]: 'B' }, jumlah_pindah_tab: 1 }));
-  Platform._cache.clear(); // cache hilang: attempt dibaca dari sheet
-  const again = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id }));
+  assert.equal(batches(), 1, 'simpanan kedua dalam 3 menit cukup di cache');
+  ok(call(env.ani, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 1, jawaban: {} })); // simpanan lama yang terlambat diabaikan
+
+  // cache masih ada: jawaban paling baru kembali
+  let again = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id }));
+  assert.equal(again.attempt_id, pkg.attempt_id);
+  assert.deepEqual(again.saved, { seq: 2, jawaban: { [pg.question_id]: 'B' }, jumlah_pindah_tab: 1 });
+
+  env.platform._advance(Config.SAVE_SHEET_SECONDS);
+  ok(call(env.ani, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 3, jawaban: { [pg.question_id]: 'C' }, jumlah_pindah_tab: 1 }));
+  assert.equal(batches(), 2);
+  Platform._cache.clear(); // cache hilang: attempt dan jawaban dibaca dari sheet
+  again = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id }));
   assert.equal(again.attempt_id, pkg.attempt_id);
   assert.deepEqual(again.questions.map((q) => q.question_id), pkg.questions.map((q) => q.question_id)); // urutan acak tetap
-  assert.deepEqual(again.saved, { seq: 2, jawaban: { [pg.question_id]: 'B' }, jumlah_pindah_tab: 1 });
+  assert.deepEqual(again.saved, { seq: 3, jawaban: { [pg.question_id]: 'C' }, jumlah_pindah_tab: 1 });
   assert.equal(err(call(env.budi, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 3, jawaban: {} })), 'NOT_FOUND'); // milik siswa lain
 });
 
@@ -104,8 +116,22 @@ test('submit menilai dengan rumus yang berlaku dan tidak bisa diulang', () => {
   assert.equal(result.skor_otomatis, 5);
   assert.equal(result.nilai_akhir, 50); // 5 / 10 * 100
   assert.equal(result.status_koreksi, 'SELESAI');
-  assert.equal(Repos.answers().findMany(Auth.SYSTEM, { attempt_id: pkg.attempt_id }).length, 4);
-  assert.equal(Repos.attempts().findById(Auth.SYSTEM, pkg.attempt_id).jumlah_pindah_tab, 3);
+  assert.equal(result.status, 'SUBMITTED');
+  assert.equal(result.jumlah_pindah_tab, 3);
+  const answers = Repos.answers().findMany(Auth.SYSTEM, { attempt_id: pkg.attempt_id });
+  assert.equal(answers.length, 1, 'satu baris jawaban per attempt');
+  assert.equal(Object.keys(answers[0].skor).length, 4);
+  assert.equal(answers[0].jawaban[id('ISIAN')], ' 25 ');
+
+  // Attempts di sheet baru diperbarui trigger; sebelum itu status tetap terbaca dari Results
+  assert.equal(Repos.attempts().findById(Auth.SYSTEM, pkg.attempt_id).status, 'PROGRESS');
+  Platform._cache.clear();
+  assert.equal(ok(call(env.ani, 'attempt.list'))[0].attempt.status, 'SUBMITTED');
+  assert.equal(err(call(env.ani, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 6, jawaban: {} })), 'DONE');
+  assert.equal(ExamEngine.syncClosed(), 1);
+  const synced = Repos.attempts().findById(Auth.SYSTEM, pkg.attempt_id);
+  assert.deepEqual([synced.status, synced.jumlah_pindah_tab, synced.selesai], ['SUBMITTED', 3, result.selesai]);
+  assert.equal(ExamEngine.syncClosed(), 0);
 
   // submit ulang dan mulai ulang tidak mengubah apa pun
   ok(call(env.ani, 'attempt.submit', { attempt_ref: pkg.attempt_id, seq: 6, jawaban: {} }));
@@ -142,4 +168,42 @@ test('soal URAIAN membuat status koreksi MENUNGGU', () => {
   const pkg = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
   ok(call(env.ani, 'attempt.submit', { attempt_ref: pkg.attempt_id, seq: 1, jawaban: {} }));
   assert.equal(Repos.results().findById(Auth.SYSTEM, pkg.attempt_id).status_koreksi, 'MENUNGGU');
+});
+
+test('dua klik Mulai bersamaan menghasilkan attempt yang sama', () => {
+  const env = seed();
+  const kode = openTest(env);
+  const first = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
+  // permintaan kedua tidak melihat permintaan pertama (cache dan sheet belum terbarui): tulis ulang baris
+  const rows = Platform._sheets['ATTEMPT:Attempts'].rows;
+  const saved = rows.slice();
+  rows.length = 0;
+  Platform._cache.clear();
+  const second = ok(call(env.ani, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
+  rows.unshift(...saved);
+  assert.equal(second.attempt_id, first.attempt_id);
+  assert.deepEqual(second.questions, first.questions, 'urutan soal dan opsi sama');
+  assert.equal(Repos.attempts().findMany(Auth.SYSTEM, {}).length, 2);
+  ok(call(env.ani, 'attempt.submit', { attempt_ref: first.attempt_id, seq: 1, jawaban: {} }));
+  assert.equal(ExamEngine.syncClosed(), 1);
+  assert.equal(ok(call(env.ani, 'attempt.list'))[0].attempt.status, 'SUBMITTED');
+  assert.notEqual(ok(call(env.budi, 'attempt.start', { test_ref: env.t.test_id, token: kode })).attempt_id, first.attempt_id);
+});
+
+test('jalur siswa tidak memakai kunci global', () => {
+  const env = seed();
+  const kode = openTest(env);
+  let locks = 0;
+  const original = Platform.withLock;
+  Platform.withLock = (fn) => { locks++; return fn(); };
+  try {
+    const sid = loginAs('ESPEGE', 'ani', 'siswa123');
+    ok(call(sid, 'attempt.list'));
+    const pkg = ok(call(sid, 'attempt.start', { test_ref: env.t.test_id, token: kode }));
+    ok(call(sid, 'attempt.save', { attempt_ref: pkg.attempt_id, seq: 1, jawaban: {} }));
+    ok(call(sid, 'attempt.submit', { attempt_ref: pkg.attempt_id, seq: 2, jawaban: {} }));
+  } finally {
+    Platform.withLock = original;
+  }
+  assert.equal(locks, 0);
 });

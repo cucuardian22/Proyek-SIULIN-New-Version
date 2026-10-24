@@ -88,16 +88,21 @@ var Schema = (function () {
       ['client_ts', 'string'], ['server_ts', 'string']
     ]),
 
-    // PostgreSQL: answer_id sebagai PK + UNIQUE (attempt_id, question_id).
-    Answers: table('ATTEMPT', 'answer_id', 'school', [
-      ['answer_id', 'string'], ['attempt_id', 'string'], ['school_id', 'string'],
-      ['question_id', 'string'], ['jawaban', 'json'], ['waktu_simpan', 'string'],
-      ['skor', 'number']
+    // Jawaban akhir satu baris per attempt (satu appendRow saat submit, tanpa kunci).
+    // jawaban = { question_id: jawaban }, skor = { question_id: skor }.
+    // PostgreSQL: dipecah jadi tabel answers (attempt_id, question_id) saat migrasi.
+    Answers: table('ATTEMPT', 'attempt_id', 'school', [
+      ['attempt_id', 'string'], ['test_id', 'string'], ['school_id', 'string'],
+      ['jawaban', 'json'], ['skor', 'json']
     ]),
 
+    // Baris Results = attempt sudah ditutup. status/selesai/jumlah_pindah_tab di sini yang berlaku;
+    // kolom yang sama di Attempts disalin oleh trigger berkala. Bila ada dua baris (submit ganda
+    // bersamaan), yang paling awal yang berlaku.
     Results: table('ATTEMPT', 'attempt_id', 'school', [
       ['attempt_id', 'string'], ['test_id', 'string'], ['school_id', 'string'],
-      ['user_id', 'string'], ['skor_otomatis', 'number'], ['skor_uraian', 'number'],
+      ['user_id', 'string'], ['status', 'string'], ['selesai', 'string'],
+      ['jumlah_pindah_tab', 'number'], ['skor_otomatis', 'number'], ['skor_uraian', 'number'],
       ['nilai_akhir', 'number'], ['status_koreksi', 'string']
     ])
   };

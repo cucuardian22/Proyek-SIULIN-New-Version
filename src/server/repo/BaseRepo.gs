@@ -1,7 +1,7 @@
 /**
  * CRUD generik di atas Platform.store(). Metodenya sengaja sama dengan repo
  * PostgreSQL di Fase 2: findById, findMany, findOne, insert, insertMany,
- * update, softDelete.
+ * update, updateMany, softDelete.
  *
  * Setiap metode wajib menerima ctx dari sesi server:
  *   { userId, schoolId, role }    -> pengguna yang login
@@ -178,38 +178,66 @@ var BaseRepo = (function () {
     return rows;
   };
 
+  /** Satu baris: appendRow tanpa kunci global, supaya penulisan serentak (auto-save, submit, login) tidak antre. */
   BaseRepo.prototype.insert = function (ctx, obj) {
-    return this.insertMany(ctx, [obj])[0];
+    assertCtx(ctx);
+    var row = this._prepareNew(ctx, obj);
+    Platform.store().appendRow(this.table.db, this.tableName, this._toRow(row));
+    this._invalidate();
+    return row;
+  };
+
+  /** Terapkan patch ke baris pertama dengan id tsb. Dipanggil di dalam kunci. */
+  BaseRepo.prototype._patchRow = function (ctx, data, id, patch) {
+    var idCol = data.header.indexOf(this.table.id);
+    var index = -1;
+    for (var i = 0; i < data.rows.length; i++) {
+      if (String(data.rows[i][idCol]) === String(id)) { index = i; break; }
+    }
+    if (index < 0) throw new Utils.AppError('NOT_FOUND', 'Data tidak ditemukan.');
+    var current = this._toObj(data.header, data.rows[index]);
+    // Baris bersama (soal GLOBAL) boleh dibaca semua sekolah, tetapi hanya pemiliknya yang boleh mengubah.
+    var owned = this.table.scope !== 'school' || unrestricted(ctx) || current.school_id === ctx.schoolId;
+    if (current.deleted_at || !owned) throw new Utils.AppError('NOT_FOUND', 'Data tidak ditemukan.');
+
+    var next = {};
+    for (var k in current) next[k] = current[k];
+    for (var p in patch) {
+      if (!Object.prototype.hasOwnProperty.call(patch, p)) continue;
+      if (p === this.table.id || p === 'created_at') continue;
+      if (p === 'school_id' && this.table.scope === 'school' && !unrestricted(ctx)) continue;
+      next[p] = patch[p];
+    }
+    next.updated_at = Utils.nowIso();
+    Platform.store().writeRow(this.table.db, this.tableName, index, this._toRow(next, data.header));
+    return next;
   };
 
   BaseRepo.prototype.update = function (ctx, id, patch) {
     assertCtx(ctx);
     var self = this;
     return Platform.withLock(function () {
-      var data = Platform.store().readAll(self.table.db, self.tableName);
-      var idCol = data.header.indexOf(self.table.id);
-      var index = -1;
-      for (var i = 0; i < data.rows.length; i++) {
-        if (String(data.rows[i][idCol]) === String(id)) { index = i; break; }
-      }
-      if (index < 0) throw new Utils.AppError('NOT_FOUND', 'Data tidak ditemukan.');
-      var current = self._toObj(data.header, data.rows[index]);
-      // Baris bersama (soal GLOBAL) boleh dibaca semua sekolah, tetapi hanya pemiliknya yang boleh mengubah.
-      var owned = self.table.scope !== 'school' || unrestricted(ctx) || current.school_id === ctx.schoolId;
-      if (current.deleted_at || !owned) throw new Utils.AppError('NOT_FOUND', 'Data tidak ditemukan.');
-
-      var next = {};
-      for (var k in current) next[k] = current[k];
-      for (var p in patch) {
-        if (!Object.prototype.hasOwnProperty.call(patch, p)) continue;
-        if (p === self.table.id || p === 'created_at') continue;
-        if (p === 'school_id' && self.table.scope === 'school' && !unrestricted(ctx)) continue;
-        next[p] = patch[p];
-      }
-      next.updated_at = Utils.nowIso();
-      Platform.store().writeRow(self.table.db, self.tableName, index, self._toRow(next, data.header));
+      var next = self._patchRow(ctx, Platform.store().readAll(self.table.db, self.tableName), id, patch);
       self._invalidate();
       return next;
+    });
+  };
+
+  /**
+   * Banyak patch sekaligus dengan satu kunci dan satu kali baca sheet (dipakai trigger berkala).
+   * @param {Object<string, Object>} patches  { id: patch }
+   * @return {number} jumlah baris yang diubah
+   */
+  BaseRepo.prototype.updateMany = function (ctx, patches) {
+    assertCtx(ctx);
+    var ids = Object.keys(patches);
+    if (!ids.length) return 0;
+    var self = this;
+    return Platform.withLock(function () {
+      var data = Platform.store().readAll(self.table.db, self.tableName);
+      ids.forEach(function (id) { self._patchRow(ctx, data, id, patches[id]); });
+      self._invalidate();
+      return ids.length;
     });
   };
 

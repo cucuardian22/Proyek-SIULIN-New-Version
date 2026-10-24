@@ -14,9 +14,13 @@ var ResultService = (function () {
 
   function round2(n) { return Math.round(n * 100) / 100; }
 
-  function byId(list, key) {
+  /** { attempt_id: baris Answers } dengan baris paling awal bila ada submit ganda. */
+  function firstAnswers(filter) {
     var map = {};
-    list.forEach(function (x) { map[x[key]] = x; });
+    Repos.answers().findMany(SYSTEM, filter).forEach(function (r) {
+      var prev = map[r.attempt_id];
+      if (!prev || r.created_at < prev.created_at) map[r.attempt_id] = r;
+    });
     return map;
   }
 
@@ -48,12 +52,11 @@ var ResultService = (function () {
     var own = openTest(ctx, payload.test_ref);
     var test = own.test;
     var kelas = test.kelas_peserta || [];
+    var results = ExamEngine.closedResults({ test_id: test.test_id, school_id: test.school_id });
     var attempts = {};
-    Repos.attempts().findMany(ctx, { test_id: test.test_id }).forEach(function (a) {
-      var prev = attempts[a.user_id];
-      if (!prev || (a.created_at + a.attempt_id) < (prev.created_at + prev.attempt_id)) attempts[a.user_id] = a;
+    ExamEngine.uniqueAttempts(Repos.attempts().findMany(ctx, { test_id: test.test_id })).forEach(function (a) {
+      if (!attempts[a.user_id]) attempts[a.user_id] = ExamEngine.applyResult(a, results[a.attempt_id]);
     });
-    var results = byId(Repos.results().findMany(ctx, { test_id: test.test_id }), 'attempt_id');
 
     // Peserta = siswa kelas peserta, ditambah siswa yang sudah mengerjakan lalu pindah kelas.
     var students = Repos.users().findMany(ctx, { role: 'SISWA' }).filter(function (u) {
@@ -103,22 +106,25 @@ var ResultService = (function () {
     var a = Repos.attempts().findById(ctx, payload.attempt_ref);
     if (!a) Utils.fail('NOT_FOUND', 'Data pengerjaan tidak ditemukan.');
     var own = openTest(ctx, a.test_id);
-    a = Repos.attempts().findById(ctx, a.attempt_id);
+    var result = ExamEngine.closedResults({ attempt_id: a.attempt_id })[a.attempt_id] || null;
+    a = ExamEngine.applyResult(a, result);
     var user = Repos.users().findById(ctx, a.user_id) || {};
-    var result = Repos.results().findById(ctx, a.attempt_id);
-    var answers = byId(Repos.answers().findMany(ctx, { attempt_id: a.attempt_id }), 'question_id');
+    var ans = firstAnswers({ attempt_id: a.attempt_id })[a.attempt_id];
+    var jawaban = ans ? ans.jawaban || {} : {};
+    var skor = ans ? ans.skor || {} : {};
     var map = questionsById(a.urutan_soal.map(function (u) { return u.q; }));
 
     var items = a.urutan_soal.map(function (u, i) {
       var q = map[u.q];
-      var ans = answers[u.q];
-      if (!q) return { no: i + 1, question_id: u.q, tipe: '', teks: '(soal tidak ditemukan)', opsi: [], kunci: null, bobot: 0, jawaban: ans ? ans.jawaban : null, skor: ans ? ans.skor : null };
+      var j = ans && jawaban[u.q] !== undefined ? jawaban[u.q] : null;
+      var sk = ans && skor[u.q] !== undefined ? skor[u.q] : null;
+      if (!q) return { no: i + 1, question_id: u.q, tipe: '', teks: '(soal tidak ditemukan)', opsi: [], kunci: null, bobot: 0, jawaban: j, skor: sk };
       return {
         no: i + 1, question_id: q.question_id, tipe: q.tipe, teks: q.teks, media_url: q.media_url,
         opsi: (q.opsi || []).map(function (o) { return { id: o.id, teks: o.teks }; }),
         kunci: q.kunci, bobot: q.bobot,
-        jawaban: ans ? ans.jawaban : null,
-        skor: ans ? ans.skor : null
+        jawaban: j,
+        skor: sk
       };
     });
     return {
@@ -133,30 +139,35 @@ var ResultService = (function () {
   /** @param {{test_ref:string}} payload */
   function analysis(ctx, payload) {
     var own = openTest(ctx, payload.test_ref);
-    var attemptIds = {};
-    Repos.results().findMany(ctx, { test_id: own.test.test_id }).forEach(function (r) { attemptIds[r.attempt_id] = true; });
+    var filter = { test_id: own.test.test_id, school_id: own.test.school_id };
+    var answers = firstAnswers(filter);
+    var attemptIds = Object.keys(ExamEngine.closedResults(filter)).filter(function (id) { return answers[id]; });
     var stats = {};
-    Repos.answers().findMany(ctx).forEach(function (ans) {
-      if (!attemptIds[ans.attempt_id]) return;
-      var s = stats[ans.question_id] || (stats[ans.question_id] = { peserta: 0, dijawab: 0, total_skor: 0, pilihan: {} });
-      s.peserta++;
-      var empty = ans.jawaban === null || ans.jawaban === '' || (Array.isArray(ans.jawaban) && !ans.jawaban.length) ||
-        (typeof ans.jawaban === 'object' && !Array.isArray(ans.jawaban) && !Object.keys(ans.jawaban).length);
-      if (!empty) s.dijawab++;
-      if (ans.skor !== null) s.total_skor += Number(ans.skor) || 0;
-      if (!empty && (typeof ans.jawaban === 'string' || Array.isArray(ans.jawaban))) {
-        (Array.isArray(ans.jawaban) ? ans.jawaban : [ans.jawaban]).forEach(function (id) {
-          var k = String(id).toUpperCase();
-          s.pilihan[k] = (s.pilihan[k] || 0) + 1;
-        });
-      }
+    attemptIds.forEach(function (id) {
+      var jawaban = answers[id].jawaban || {};
+      var skor = answers[id].skor || {};
+      Object.keys(skor).forEach(function (qid) {
+        var v = jawaban[qid] === undefined ? null : jawaban[qid];
+        var s = stats[qid] || (stats[qid] = { peserta: 0, dijawab: 0, total_skor: 0, pilihan: {} });
+        s.peserta++;
+        var empty = v === null || v === '' || (Array.isArray(v) && !v.length) ||
+          (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+        if (!empty) s.dijawab++;
+        if (skor[qid] !== null) s.total_skor += Number(skor[qid]) || 0;
+        if (!empty && (typeof v === 'string' || Array.isArray(v))) {
+          (Array.isArray(v) ? v : [v]).forEach(function (opt) {
+            var k = String(opt).toUpperCase();
+            s.pilihan[k] = (s.pilihan[k] || 0) + 1;
+          });
+        }
+      });
     });
 
     // Urutan bank soal (urutan baris sheet), bukan urutan acak yang dilihat siswa.
     var questions = Repos.questions()._all().filter(function (q) { return stats[q.question_id]; });
     return {
       test: testInfo(own),
-      peserta: Object.keys(attemptIds).length,
+      peserta: attemptIds.length,
       items: questions.map(function (q, i) {
         var s = stats[q.question_id];
         var choice = q.tipe === 'PG' || q.tipe === 'PGK';

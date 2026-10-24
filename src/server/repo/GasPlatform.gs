@@ -4,7 +4,8 @@
  * Di Fase 2 file ini diganti adapter PostgreSQL/Redis dengan antarmuka sama:
  *
  *   store():  readAll(db, sheet) -> { header: [], rows: [[]] }
- *             append(db, sheet, rows)
+ *             append(db, sheet, rows)          (dipanggil di dalam withLock)
+ *             appendRow(db, sheet, values)     (tanpa kunci; aman untuk penulisan serentak)
  *             writeRow(db, sheet, dataIndex, values)
  *   cache():  get, put, remove, getAll, putAll
  *   withLock(fn), uuid(), now(), hmacSha256Hex(key, msg), randomToken(), prop(key)
@@ -34,6 +35,20 @@ var Platform = (function () {
     return sh;
   }
 
+  /** Tambah blok baris cadangan berformat teks. Hanya satu eksekusi yang mengerjakannya. */
+  function provisionRows(sh) {
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(Config.LOCK_WAIT_MS)) return; // eksekusi lain sedang menambah baris
+    try {
+      if (sh.getMaxRows() - sh.getLastRow() >= Config.SPARE_ROWS_MIN) return;
+      var extra = Config.SPARE_ROWS_BLOCK;
+      sh.insertRowsAfter(sh.getMaxRows(), extra);
+      sh.getRange(sh.getMaxRows() - extra + 1, 1, extra, sh.getMaxColumns()).setNumberFormat('@');
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
   var store = {
     readAll: function (db, name) {
       var values = sheet(db, name).getDataRange().getValues();
@@ -51,6 +66,14 @@ var Platform = (function () {
         sh.getRange(sh.getMaxRows() - extra + 1, 1, extra, sh.getMaxColumns()).setNumberFormat('@');
       }
       sh.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+    },
+    appendRow: function (db, name, values) {
+      // Sheet.appendRow atomik: banyak eksekusi bisa menambah baris bersamaan tanpa saling menimpa,
+      // jadi auto-save, submit, login, dan mulai tes tidak perlu antre di kunci global.
+      // Baris cadangan berformat teks disiapkan lebih dulu supaya nilai tidak diubah Sheets jadi tanggal/angka.
+      var sh = sheet(db, name);
+      if (sh.getMaxRows() - sh.getLastRow() < Config.SPARE_ROWS_MIN) provisionRows(sh);
+      sh.appendRow(values);
     },
     writeRow: function (db, name, dataIndex, values) {
       // dataIndex 0 = baris ke-2 (baris 1 adalah header).

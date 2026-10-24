@@ -8,7 +8,8 @@
  *    Password dihapus dari Script Properties setelah dipakai.
  *
  * 3. setupTriggers()     -> memasang trigger tiap 10 menit yang mengumpulkan ujian
- *                           yang waktunya habis tanpa ditekan "Selesai".
+ *                           yang waktunya habis tanpa ditekan "Selesai", lalu menyalin
+ *                           status ujian yang sudah dikumpulkan ke sheet Attempts.
  *
  * Aman dijalankan berulang: sheet yang sudah benar tidak diubah.
  *

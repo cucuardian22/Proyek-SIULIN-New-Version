@@ -24,7 +24,14 @@ var Config = {
   TABLE_CACHE_SECONDS: 10 * 60,
   CACHE_CHUNK_CHARS: 90000,
 
-  LOCK_WAIT_MS: 20000
+  LOCK_WAIT_MS: 20000,
+
+  // Baris kosong berformat teks yang selalu disiapkan di bawah data, untuk appendRow tanpa kunci.
+  SPARE_ROWS_MIN: 300,
+  SPARE_ROWS_BLOCK: 2000,
+
+  // Auto-save selalu masuk cache; ke sheet AnswerBatches paling sering sekali per selang ini.
+  SAVE_SHEET_SECONDS: 180
 };
 
 if (typeof module !== 'undefined') module.exports = Config;

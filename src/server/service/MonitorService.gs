@@ -29,10 +29,10 @@ var MonitorService = (function () {
     var test = own.test;
     ExamEngine.finalizeExpired(test.test_id);
 
+    var results = ExamEngine.closedResults({ test_id: test.test_id, school_id: test.school_id });
     var attempts = {};
-    Repos.attempts().findMany(ctx, { test_id: test.test_id }).forEach(function (a) {
-      var prev = attempts[a.user_id];
-      if (!prev || (a.created_at + a.attempt_id) < (prev.created_at + prev.attempt_id)) attempts[a.user_id] = a;
+    ExamEngine.uniqueAttempts(Repos.attempts().findMany(ctx, { test_id: test.test_id })).forEach(function (a) {
+      if (!attempts[a.user_id]) attempts[a.user_id] = ExamEngine.applyResult(a, results[a.attempt_id]);
     });
     var kelas = test.kelas_peserta || [];
     var students = Repos.users().findMany(ctx, { role: 'SISWA' }).filter(function (u) {
