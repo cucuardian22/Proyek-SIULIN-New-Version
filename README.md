@@ -19,8 +19,9 @@ Tahap 1, bagian fondasi:
 - Jadwal tes (kelas peserta, rentang waktu, durasi, acak soal/opsi, KKM) dan token tes yang bisa diganti pengawas; soal ujian terkunci setelah tes dimulai
 
 - Mesin ujian (`service/ExamEngine.gs`): siswa masuk dengan token, soal/opsi diacak per siswa tanpa kunci terkirim ke browser, timer dari jam server, tanda ragu-ragu, simpan otomatis tiap 60 detik dan saat pindah tab, lanjut setelah browser tertutup, kumpul otomatis saat waktu habis (trigger tiap 10 menit), nilai dihitung saat submit
+- Rekap nilai per tes (`service/ResultService.gs`): status dan nilai tiap siswa peserta, ketuntasan terhadap KKM, ringkasan rata-rata/tertinggi/terendah, filter kelas, unduh CSV, jawaban siswa per soal beserta kunci, dan analisis butir soal (tingkat benar, sebaran pilihan PG/PGK). Ujian yang waktunya habis langsung dikumpulkan saat rekap dibuka.
 
-Berikutnya: rekap nilai, monitoring pengawas, uji beban.
+Berikutnya: monitoring pengawas, uji beban.
 
 ## Struktur
 
@@ -43,12 +44,12 @@ src/
     service/       logika bisnis murni
       ScoringService.gs, SchoolService.gs, UserService.gs,
       TopicService.gs, ExamService.gs, QuestionService.gs,
-      TestService.gs, TokenService.gs, ExamEngine.gs
+      TestService.gs, TokenService.gs, ExamEngine.gs, ResultService.gs
   client/
     Index.html, Style.html, Core.js.html (callApi, sesi, navigasi, CSV)
     pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html,
     pages/Topics.html, pages/Exams.html, pages/Questions.html,
-    pages/Tests.html, pages/Tokens.html, pages/MyExams.html, pages/Exam.html
+    pages/Tests.html, pages/Tokens.html, pages/Results.html, pages/MyExams.html, pages/Exam.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
 ```
 

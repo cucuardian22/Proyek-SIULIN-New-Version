@@ -22,7 +22,8 @@ const FILES = {
   QuestionService: 'service/QuestionService.gs',
   TestService: 'service/TestService.gs',
   TokenService: 'service/TokenService.gs',
-  ExamEngine: 'service/ExamEngine.gs'
+  ExamEngine: 'service/ExamEngine.gs',
+  ResultService: 'service/ResultService.gs'
 };
 
 function loadApp(opts) {
