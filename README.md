@@ -16,7 +16,9 @@ Tahap 1, bagian fondasi:
 - Topik ujian (SUPER_ADMIN), ujian per mapel/kelas dengan nama otomatis, GURU dibatasi ke mapel yang diampu
 - Bank soal: editor 6 tipe (PG, PGK, PGBS, PGST, ISIAN, URAIAN), import dari template, bank soal pusat ber-scope GLOBAL yang terbaca semua sekolah
 
-Berikutnya: jadwal tes & token, mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
+- Jadwal tes (kelas peserta, rentang waktu, durasi, acak soal/opsi, KKM) dan token tes yang bisa diganti pengawas; soal ujian terkunci setelah tes dimulai
+
+Berikutnya: mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
 
 ## Struktur
 
@@ -38,11 +40,13 @@ src/
       Repos.gs, SchoolRepo.gs, UserRepo.gs
     service/       logika bisnis murni
       ScoringService.gs, SchoolService.gs, UserService.gs,
-      TopicService.gs, ExamService.gs, QuestionService.gs
+      TopicService.gs, ExamService.gs, QuestionService.gs,
+      TestService.gs, TokenService.gs
   client/
     Index.html, Style.html, Core.js.html (callApi, sesi, navigasi, CSV)
     pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html,
-    pages/Topics.html, pages/Exams.html, pages/Questions.html
+    pages/Topics.html, pages/Exams.html, pages/Questions.html,
+    pages/Tests.html, pages/Tokens.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
 ```
 
@@ -98,5 +102,7 @@ npm test
 5. Di Project Settings > Script Properties, isi `SETUP_ADMIN_USER` dan `SETUP_ADMIN_PASSWORD`, lalu jalankan `setupSuperAdmin`. Catat waktu hash di log; bila di atas 300 ms, turunkan `Config.HASH_ITERATIONS`.
 6. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
 7. Buka URL web app, login dengan kode sekolah `PUSAT`.
+
+Catatan: kolom `kelas_peserta` ditambahkan ke sheet Tests. Bila `setupSiulin()` sudah pernah dijalankan dan sheet Tests masih kosong, jalankan lagi; bila sudah berisi data, tambahkan kolom itu di akhir header secara manual.
 
 Setiap klaster memakai akun Google pemilik yang berbeda, karena batas 30 eksekusi serentak berlaku per akun.

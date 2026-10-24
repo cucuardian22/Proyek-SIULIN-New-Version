@@ -118,6 +118,7 @@ var QuestionService = (function () {
 
   function create(ctx, payload) {
     var exam = ExamService.getEditable(ctx, payload.exam_ref);
+    TestService.assertExamUnlocked(exam.exam_id);
     var q = normalize(payload);
     var errors = validate(q);
     if (errors.length) Utils.fail('INVALID_INPUT', errors.join(' '));
@@ -128,6 +129,7 @@ var QuestionService = (function () {
     var current = Repos.questions().findById(ctx, payload.question_ref);
     if (!current) Utils.fail('NOT_FOUND', 'Soal tidak ditemukan.');
     var exam = ExamService.getEditable(ctx, current.exam_id);
+    TestService.assertExamUnlocked(exam.exam_id);
     var q = normalize(payload);
     var errors = validate(q);
     if (errors.length) Utils.fail('INVALID_INPUT', errors.join(' '));
@@ -140,6 +142,7 @@ var QuestionService = (function () {
     var current = Repos.questions().findById(ctx, payload.question_ref);
     if (!current) Utils.fail('NOT_FOUND', 'Soal tidak ditemukan.');
     ExamService.getEditable(ctx, current.exam_id);
+    TestService.assertExamUnlocked(current.exam_id);
     Repos.questions().softDelete(ctx, current.question_id);
     return true;
   }
@@ -150,6 +153,7 @@ var QuestionService = (function () {
    */
   function importRows(ctx, payload) {
     var exam = ExamService.getEditable(ctx, payload.exam_ref);
+    TestService.assertExamUnlocked(exam.exam_id);
     var rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (!rows.length) Utils.fail('INVALID_INPUT', 'Tidak ada baris untuk diimport.');
     if (rows.length > IMPORT_MAX_ROWS) Utils.fail('INVALID_INPUT', 'Maksimal ' + IMPORT_MAX_ROWS + ' baris per kiriman.');

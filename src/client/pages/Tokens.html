@@ -1,0 +1,50 @@
+<script>
+// Token tes untuk pengawas/guru/admin. Diperbarui otomatis tiap 30 detik selama halaman terbuka.
+SIULIN.view('tokens', {
+  title: 'Token',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    var REFRESH_MS = 30000;
+    var timer = null;
+
+    el.innerHTML =
+      '<div class="toolbar"><label class="field"><span>Masa berlaku token baru</span><select id="tk-minutes">' +
+      '<option value="15">15 menit</option><option value="30">30 menit</option><option value="60">1 jam</option><option value="120">2 jam</option></select></label>' +
+      '<div class="spacer"></div><button class="btn" type="button" id="tk-refresh">Muat ulang</button></div>' +
+      '<p class="muted">Tes yang belum selesai. Membuat token baru membuat token lama tes itu tidak berlaku.</p>' +
+      '<div id="tk-list" class="token-grid"><div class="empty">Memuat...</div></div>';
+    var list = el.querySelector('#tk-list');
+
+    function load() {
+      // Berhenti bila pindah tampilan, keluar, atau sesi berakhir.
+      if (el.querySelector('#tk-list') !== list || document.getElementById('page-dashboard').hidden || !SIULIN.state.session) return stop();
+      SIULIN.callApi('token.list').then(function (d) {
+        list.innerHTML = d.length ? d.map(function (t) {
+          return '<div class="card"><div class="q-head"><strong>' + esc(t.judul) + '</strong><span class="spacer"></span><span class="st-' + t.status + '">' +
+            (t.status === 'BERLANGSUNG' ? 'Berlangsung' : 'Belum mulai') + '</span></div>' +
+            '<div class="muted">' + esc(t.nama_ujian) + ' &middot; kelas ' + esc((t.kelas_peserta || []).join(', ')) + '</div>' +
+            '<div class="muted">' + esc(SIULIN.fmtTime(t.mulai)) + ' s.d. ' + esc(SIULIN.fmtTime(t.selesai)) + '</div>' +
+            (t.token ? '<div class="token-code">' + esc(t.token.kode) + '</div><div class="muted">berlaku sampai ' + esc(SIULIN.fmtTime(t.token.berlaku_sampai)) + '</div>'
+              : '<div class="token-none">Belum ada token aktif.</div>') +
+            '<p style="margin:12px 0 0"><button class="btn btn-sm btn-blue" type="button" data-id="' + esc(t.test_id) + '">' + (t.token ? 'Ganti token' : 'Buat token') + '</button></p></div>';
+        }).join('') : '<div class="card empty">Tidak ada tes yang belum selesai.</div>';
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+    list.addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-id]');
+      if (!b) return;
+      b.disabled = true;
+      SIULIN.callApi('token.generate', { test_ref: b.getAttribute('data-id'), berlaku_menit: Number(el.querySelector('#tk-minutes').value) })
+        .then(function (tok) { SIULIN.toast('Token baru: ' + tok.kode); load(); })
+        .catch(function (e) { SIULIN.toast(e.message); b.disabled = false; });
+    });
+    el.querySelector('#tk-refresh').addEventListener('click', load);
+
+    load();
+    timer = setInterval(load, REFRESH_MS);
+  }
+});
+</script>

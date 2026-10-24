@@ -1,0 +1,104 @@
+<script>
+// Jadwal tes: daftar, tambah, ubah (sebelum mulai), hapus (sebelum mulai).
+SIULIN.view('tests', {
+  title: 'Jadwal tes',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    var tests = [], exams = [];
+    var editing = null;
+    var STATUS_LABEL = { BELUM: 'Belum mulai', BERLANGSUNG: 'Berlangsung', SELESAI: 'Selesai' };
+
+    el.innerHTML =
+      '<div class="toolbar"><label class="field"><span>Status</span><select id="ts-status"><option value="">Semua</option><option value="BELUM">Belum mulai</option><option value="BERLANGSUNG">Berlangsung</option><option value="SELESAI">Selesai</option></select></label>' +
+      '<div class="spacer"></div><button class="btn btn-blue" type="button" id="ts-add">Tambah jadwal</button></div>' +
+      '<form id="ts-form" class="card panel" hidden novalidate><h2 id="ts-title"></h2>' +
+      '<label class="field"><span>Ujian (bank soal)</span><select name="exam_ref"></select></label>' +
+      '<div class="grid-2">' +
+      '<label class="field"><span>Judul tes</span><input name="judul" placeholder="Kosongkan: nama mapel + kelas"></label>' +
+      '<label class="field"><span>Kelas peserta (pisahkan koma)</span><input name="kelas_peserta" placeholder="7A, 7B"></label>' +
+      '<label class="field"><span>Boleh mulai dari</span><input name="mulai" type="datetime-local"></label>' +
+      '<label class="field"><span>Batas akhir</span><input name="selesai" type="datetime-local"></label>' +
+      '<label class="field"><span>Durasi mengerjakan (menit)</span><input name="durasi_menit" type="number" min="1" max="600" value="90"></label>' +
+      '<label class="field"><span>KKM (0-100)</span><input name="kkm" type="number" min="0" max="100" value="75"></label>' +
+      '</div>' +
+      '<label class="check"><input type="checkbox" name="acak_soal" checked> Acak urutan soal</label>' +
+      '<label class="check"><input type="checkbox" name="acak_opsi" checked> Acak urutan opsi (PG dan PGK)</label>' +
+      '<p class="muted">Waktu memakai zona waktu perangkat ini. Setelah tes dimulai, jadwal dan soal ujiannya terkunci.</p>' +
+      '<p class="error" id="ts-error" role="alert"></p>' +
+      '<button class="btn btn-blue" type="submit">Simpan</button> <button class="btn" type="button" id="ts-cancel">Batal</button></form>' +
+      '<div class="table-wrap"><table><thead><tr><th>Tes</th><th>Kelas</th><th>Waktu</th><th>Durasi</th><th>Status</th><th></th></tr></thead><tbody id="ts-body"><tr><td colspan="6" class="empty">Memuat...</td></tr></tbody></table></div>';
+    var $ = function (s) { return el.querySelector(s); };
+    var form = $('#ts-form');
+
+    function load() {
+      SIULIN.callApi('test.list', { status: $('#ts-status').value }).then(function (d) {
+        tests = d;
+        $('#ts-body').innerHTML = d.length ? d.map(function (t) {
+          var open = t.status === 'BELUM';
+          return '<tr><td><strong>' + esc(t.judul) + '</strong><div class="muted">' + esc(t.nama_ujian) + '</div></td>' +
+            '<td>' + esc((t.kelas_peserta || []).join(', ')) + '</td>' +
+            '<td>' + esc(SIULIN.fmtTime(t.mulai)) + '<div class="muted">s.d. ' + esc(SIULIN.fmtTime(t.selesai)) + '</div></td>' +
+            '<td>' + t.durasi_menit + ' menit<div class="muted">KKM ' + esc(t.kkm) + '</div></td>' +
+            '<td class="st-' + t.status + '">' + STATUS_LABEL[t.status] + '</td><td class="actions">' +
+            (open ? '<button class="btn btn-sm" type="button" data-act="edit" data-id="' + esc(t.test_id) + '">Ubah</button> ' +
+              '<button class="btn btn-sm" type="button" data-act="del" data-id="' + esc(t.test_id) + '">Hapus</button>' : '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="6" class="empty">Belum ada jadwal tes.</td></tr>';
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function openForm(t) {
+      editing = t;
+      form.hidden = false;
+      $('#ts-title').textContent = t ? 'Ubah jadwal' : 'Tambah jadwal tes';
+      form.exam_ref.innerHTML = exams.filter(function (e) { return e.jumlah_soal > 0 || (t && t.exam_id === e.exam_id); }).map(function (e) {
+        return '<option value="' + esc(e.exam_id) + '">' + esc(e.nama_ujian + ' (' + e.jumlah_soal + ' soal' + (e.school_id ? '' : ', pusat') + ')') + '</option>';
+      }).join('');
+      if (t) form.exam_ref.value = t.exam_id;
+      form.judul.value = t ? t.judul : '';
+      form.kelas_peserta.value = t ? (t.kelas_peserta || []).join(', ') : '';
+      form.mulai.value = t ? SIULIN.toLocalInput(t.mulai) : '';
+      form.selesai.value = t ? SIULIN.toLocalInput(t.selesai) : '';
+      form.durasi_menit.value = t ? t.durasi_menit : 90;
+      form.kkm.value = t ? t.kkm : 75;
+      form.acak_soal.checked = t ? t.acak_soal : true;
+      form.acak_opsi.checked = t ? t.acak_opsi : true;
+      $('#ts-error').textContent = '';
+    }
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var p = {
+        exam_ref: form.exam_ref.value, judul: form.judul.value, kelas_peserta: form.kelas_peserta.value,
+        mulai: SIULIN.fromLocalInput(form.mulai.value), selesai: SIULIN.fromLocalInput(form.selesai.value),
+        durasi_menit: Number(form.durasi_menit.value), kkm: form.kkm.value,
+        acak_soal: form.acak_soal.checked, acak_opsi: form.acak_opsi.checked
+      };
+      if (editing) p.test_ref = editing.test_id;
+      var btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      SIULIN.callApi(editing ? 'test.update' : 'test.create', p)
+        .then(function () { form.hidden = true; SIULIN.toast('Jadwal tersimpan.'); load(); })
+        .catch(function (e) { $('#ts-error').textContent = e.message; })
+        .then(function () { btn.disabled = false; });
+    });
+
+    $('#ts-body').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-act]');
+      if (!b) return;
+      var t = tests.filter(function (x) { return x.test_id === b.getAttribute('data-id'); })[0];
+      if (b.getAttribute('data-act') === 'edit') return openForm(t);
+      if (!confirm('Hapus jadwal ' + t.judul + '?')) return;
+      SIULIN.callApi('test.remove', { test_ref: t.test_id }).then(function () { SIULIN.toast('Jadwal dihapus.'); load(); })
+        .catch(function (e) { SIULIN.toast(e.message); });
+    });
+    $('#ts-add').addEventListener('click', function () {
+      if (!exams.some(function (e) { return e.jumlah_soal > 0; })) return SIULIN.toast('Belum ada ujian yang punya soal.');
+      openForm(null);
+    });
+    $('#ts-cancel').addEventListener('click', function () { form.hidden = true; });
+    $('#ts-status').addEventListener('change', load);
+
+    SIULIN.callApi('exam.list', {}).then(function (d) { exams = d; load(); }).catch(function (e) { SIULIN.toast(e.message); });
+  }
+});
+</script>

@@ -99,6 +99,7 @@ var ExamService = (function () {
 
   function update(ctx, payload) {
     var exam = getEditable(ctx, payload.exam_ref);
+    TestService.assertExamUnlocked(exam.exam_id);
     var data = clean(payload);
     var merged = {
       topic_id: data.topic_id !== undefined ? data.topic_id : exam.topic_id,
@@ -113,6 +114,9 @@ var ExamService = (function () {
     var exam = getEditable(ctx, payload.exam_ref);
     if (Repos.questions().findMany(ctx, { exam_id: exam.exam_id }).length) {
       Utils.fail('IN_USE', 'Hapus semua soal di ujian ini dulu.');
+    }
+    if (Repos.tests().findMany(Auth.SYSTEM, { exam_id: exam.exam_id }).length) {
+      Utils.fail('IN_USE', 'Ujian ini masih dipakai jadwal tes.');
     }
     Repos.exams().softDelete(ctx, exam.exam_id);
     return true;

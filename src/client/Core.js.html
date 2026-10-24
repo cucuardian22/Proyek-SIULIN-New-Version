@@ -115,6 +115,23 @@ var SIULIN = (function () {
     });
   }
 
+  /** ISO UTC -> teks waktu lokal, mis. "24 Okt 2026, 08.00". */
+  function fmtTime(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** ISO UTC -> nilai <input type="datetime-local"> dalam zona waktu perangkat. */
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /** Nilai datetime-local (waktu lokal) -> ISO UTC untuk server. */
+  function fromLocalInput(v) { return v ? new Date(v).toISOString() : ''; }
+
   function loading(on) { document.getElementById('loading').hidden = !on; }
 
   var toastTimer = null;
@@ -146,7 +163,8 @@ var SIULIN = (function () {
     state: state, callApi: callApi, saveSession: saveSession, clearSession: clearSession,
     page: page, show: show, view: view, hasView: hasView, getView: getView,
     loading: loading, toast: toast, esc: esc, start: start,
-    download: download, toCsv: toCsv, parseTable: parseTable
+    download: download, toCsv: toCsv, parseTable: parseTable,
+    fmtTime: fmtTime, toLocalInput: toLocalInput, fromLocalInput: fromLocalInput
   };
 })();
 
