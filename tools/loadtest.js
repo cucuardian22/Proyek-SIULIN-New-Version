@@ -31,6 +31,10 @@ function parseArgs(argv) {
     opts[m[1]] = typeof DEFAULTS[m[1]] === 'number' ? Number(v) : v;
   }
   for (const k of ['url', 'token', 'password']) if (!opts[k]) throw new Error('--' + k + ' wajib diisi.');
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(opts.url) && !/^http:\/\/localhost[:/]/.test(opts.url)) {
+    throw new Error('--url harus alamat web app dari Deploy > Manage deployments, berbentuk ' +
+      'https://script.google.com/macros/s/.../exec (yang tertulis: ' + opts.url + ').');
+  }
   return opts;
 }
 
@@ -169,9 +173,10 @@ async function main() {
 
   const progress = setInterval(() => {
     const recent = client.calls.filter((c) => c.at > Date.now() - 60000);
-    const bad = recent.filter((c) => !c.ok).length;
+    const bad = recent.filter((c) => !c.ok);
     console.log('[' + Math.round((Date.now() - t0) / 1000) + ' dtk] mulai ' + state.started + '/' + opts.students +
-      ', kumpul ' + state.submitted + ', panggilan 1 menit terakhir ' + recent.length + ' (gagal ' + bad + ')');
+      ', kumpul ' + state.submitted + ', panggilan 1 menit terakhir ' + recent.length + ' (gagal ' + bad.length + ')' +
+      (bad.length ? ', gagal terakhir: ' + bad[bad.length - 1].route + ' ' + bad[bad.length - 1].code : ''));
   }, 30000);
 
   const watchers = [];
