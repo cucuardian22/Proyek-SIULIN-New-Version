@@ -13,7 +13,10 @@ Tahap 1, bagian fondasi:
 - Halaman Login dan Dashboard
 - Sekolah (SUPER_ADMIN) dan pengguna: tambah, ubah, reset password, nonaktifkan, import dari tempelan Excel/Sheets atau CSV (dicek seluruhnya sebelum disimpan, dikirim per 100 baris), export CSV
 
-Berikutnya: bank soal & import, jadwal tes & token, mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
+- Topik ujian (SUPER_ADMIN), ujian per mapel/kelas dengan nama otomatis, GURU dibatasi ke mapel yang diampu
+- Bank soal: editor 6 tipe (PG, PGK, PGBS, PGST, ISIAN, URAIAN), import dari template, bank soal pusat ber-scope GLOBAL yang terbaca semua sekolah
+
+Berikutnya: jadwal tes & token, mesin ujian (auto-save, resume, submit), rekap nilai, uji beban.
 
 ## Struktur
 
@@ -34,10 +37,12 @@ src/
       BaseRepo.gs      CRUD generik + cache + isolasi sekolah
       Repos.gs, SchoolRepo.gs, UserRepo.gs
     service/       logika bisnis murni
-      ScoringService.gs, SchoolService.gs, UserService.gs
+      ScoringService.gs, SchoolService.gs, UserService.gs,
+      TopicService.gs, ExamService.gs, QuestionService.gs
   client/
     Index.html, Style.html, Core.js.html (callApi, sesi, navigasi, CSV)
-    pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html
+    pages/Login.html, pages/Dashboard.html, pages/Schools.html, pages/Users.html,
+    pages/Topics.html, pages/Exams.html, pages/Questions.html
 tests/             unit test Node.js (tidak di-push ke Apps Script)
 ```
 
@@ -60,6 +65,21 @@ tests/             unit test Node.js (tidak di-push ke Apps Script)
 | ISIAN, URAIAN | dinilai manual (Tahap 3) |
 
 Skor dibulatkan dua desimal. Contoh PGK: kunci [A, C], bobot 4. Jawaban [A] = 2, [A, C] = 4, [A, B] = 0, [A, B, C, D] = 0.
+
+## Template import soal
+
+Satu baris per soal; baris pertama judul kolom: `tipe, teks, bobot, a, b, c, d, e, kunci, media_url`.
+
+| Tipe | Kolom a-e | Kunci |
+| --- | --- | --- |
+| PG | opsi | `B` |
+| PGK | opsi | `A,C` |
+| PGBS | pernyataan | `B,S,B` (urut pernyataan; B = Benar, S = Salah) |
+| PGST | pernyataan | `S,TS` (S = Setuju, TS = Tidak Setuju) |
+| ISIAN | kosong | jawaban diterima dipisah `|`, mis. `25|dua puluh lima` |
+| URAIAN | kosong | pedoman penskoran (opsional) |
+
+Bobot kosong dianggap 1. Contoh lengkap bisa diunduh dari tombol "Unduh template" di halaman bank soal.
 
 ## Menjalankan test
 

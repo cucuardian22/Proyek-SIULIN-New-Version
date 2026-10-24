@@ -20,9 +20,9 @@
 (function () {
   // Menu per peran. Item tanpa view terdaftar ditampilkan redup (belum dibangun).
   var MENU = {
-    SUPER_ADMIN: [['home', 'Beranda'], ['schools', 'Sekolah'], ['users', 'Pengguna'], ['topics', 'Topik ujian'], ['questions', 'Bank soal global']],
-    ADMIN:       [['home', 'Beranda'], ['users', 'Pengguna'], ['exams', 'Ujian & mapel'], ['questions', 'Bank soal'], ['tests', 'Jadwal tes'], ['tokens', 'Token'], ['results', 'Rekap nilai']],
-    GURU:        [['home', 'Beranda'], ['questions', 'Bank soal'], ['tests', 'Jadwal tes'], ['tokens', 'Token'], ['results', 'Rekap nilai']],
+    SUPER_ADMIN: [['home', 'Beranda'], ['schools', 'Sekolah'], ['users', 'Pengguna'], ['topics', 'Topik ujian'], ['exams', 'Bank soal pusat']],
+    ADMIN:       [['home', 'Beranda'], ['users', 'Pengguna'], ['exams', 'Ujian & bank soal'], ['tests', 'Jadwal tes'], ['tokens', 'Token'], ['results', 'Rekap nilai']],
+    GURU:        [['home', 'Beranda'], ['exams', 'Ujian & bank soal'], ['tests', 'Jadwal tes'], ['tokens', 'Token'], ['results', 'Rekap nilai']],
     PENGAWAS:    [['home', 'Beranda'], ['tokens', 'Token'], ['monitoring', 'Monitoring']],
     SISWA:       [['home', 'Beranda'], ['my-exams', 'Ujian saya']]
   };
@@ -44,15 +44,18 @@
     }).join('');
   }
 
-  function open(key) {
-    current = key;
+  /** Buka tampilan; params diteruskan ke render (mis. ujian yang dipilih). menuKey = item menu yang disorot. */
+  function open(key, params, menuKey) {
+    current = menuKey || key;
     renderMenu();
     var def = SIULIN.getView(key);
     document.getElementById('dash-title').textContent = def.title;
     var el = document.getElementById('view');
     el.innerHTML = '';
-    def.render(el);
+    window.scrollTo(0, 0);
+    def.render(el, params || {});
   }
+  SIULIN.openView = open;
 
   document.getElementById('menu').addEventListener('click', function (ev) {
     var a = ev.target.closest('a[data-view]');

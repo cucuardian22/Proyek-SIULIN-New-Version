@@ -33,7 +33,22 @@ var Api = (function () {
     'user.list':     { permission: 'user.manage', handler: function (ctx, p) { return UserService.list(ctx, p); } },
     'user.create':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.create(ctx, p); } },
     'user.update':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.update(ctx, p); } },
-    'user.import':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.importRows(ctx, p); } }
+    'user.import':   { permission: 'user.manage', handler: function (ctx, p) { return UserService.importRows(ctx, p); } },
+
+    'topic.list':    { permission: 'self', handler: function (ctx, p) { return TopicService.list(ctx, p); } },
+    'topic.create':  { permission: 'topic.manage', handler: function (ctx, p) { return TopicService.create(ctx, p); } },
+    'topic.update':  { permission: 'topic.manage', handler: function (ctx, p) { return TopicService.update(ctx, p); } },
+
+    'exam.list':     { permission: 'exam.manage', handler: function (ctx, p) { return ExamService.list(ctx, p); } },
+    'exam.create':   { permission: 'exam.manage', handler: function (ctx, p) { return ExamService.create(ctx, p); } },
+    'exam.update':   { permission: 'exam.manage', handler: function (ctx, p) { return ExamService.update(ctx, p); } },
+    'exam.remove':   { permission: 'exam.manage', handler: function (ctx, p) { return ExamService.remove(ctx, p); } },
+
+    'question.list':   { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.list(ctx, p); } },
+    'question.create': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.create(ctx, p); } },
+    'question.update': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.update(ctx, p); } },
+    'question.remove': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.remove(ctx, p); } },
+    'question.import': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.importRows(ctx, p); } }
   };
 
   function sanitize(payload) {

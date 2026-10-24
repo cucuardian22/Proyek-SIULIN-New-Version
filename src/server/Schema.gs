@@ -48,7 +48,7 @@ var Schema = (function () {
       ['exam_id', 'string'], ['school_id', 'string'], ['topic_id', 'string'],
       ['kode_mapel', 'string'], ['nama_mapel', 'string'], ['kelas', 'string'],
       ['nama_ujian', 'string']
-    ], { cache: true }),
+    ], { cache: true, sharedRead: function (row) { return row.school_id === ''; } }), // ujian pusat (bank soal global)
 
     Questions: table('MASTER', 'question_id', 'school', [
       ['question_id', 'string'], ['exam_id', 'string'], ['scope', 'string'],

@@ -1,0 +1,86 @@
+<script>
+// Tampilan "Ujian & bank soal": daftar ujian per topik; tombol Soal membuka bank soal ujian itu.
+SIULIN.view('exams', {
+  title: 'Ujian & bank soal',
+  render: function (el, params) {
+    var esc = SIULIN.esc;
+    var exams = [], topics = [];
+    var editing = null;
+
+    el.innerHTML =
+      '<div class="toolbar"><label class="field"><span>Topik</span><select id="ex-topic"><option value="">Semua topik</option></select></label>' +
+      '<div class="spacer"></div><button class="btn btn-blue" id="ex-add" type="button">Tambah ujian</button></div>' +
+      '<form id="ex-form" class="card panel" hidden novalidate><h2 id="ex-title"></h2><div class="grid-2">' +
+      '<label class="field"><span>Topik</span><select name="topic_id"></select></label>' +
+      '<label class="field"><span>Kelas (tingkat)</span><input name="kelas" placeholder="7 atau X"></label>' +
+      '<label class="field"><span>Kode mapel</span><input name="kode_mapel" placeholder="MTK"></label>' +
+      '<label class="field"><span>Nama mapel</span><input name="nama_mapel" placeholder="Matematika"></label>' +
+      '</div><p class="muted">Nama ujian dibuat otomatis: KodeSekolah_InisialTopik_KodeMapel_Kelas.</p><p class="error" id="ex-error" role="alert"></p>' +
+      '<button class="btn btn-blue" type="submit">Simpan</button> <button class="btn" type="button" id="ex-cancel">Batal</button></form>' +
+      '<div class="table-wrap"><table><thead><tr><th>Nama ujian</th><th>Mapel</th><th>Kelas</th><th>Soal</th><th>Pemilik</th><th></th></tr></thead><tbody id="ex-body"><tr><td colspan="6" class="empty">Memuat...</td></tr></tbody></table></div>';
+    var $ = function (s) { return el.querySelector(s); };
+    var form = $('#ex-form');
+
+    function load() {
+      SIULIN.callApi('exam.list', { topic_id: $('#ex-topic').value }).then(function (d) {
+        exams = d;
+        $('#ex-body').innerHTML = d.length ? d.map(function (e) {
+          return '<tr><td><strong>' + esc(e.nama_ujian) + '</strong></td><td>' + esc(e.kode_mapel) + ' - ' + esc(e.nama_mapel) + '</td><td>' + esc(e.kelas) +
+            '</td><td>' + e.jumlah_soal + '</td><td>' + (e.school_id ? 'Sekolah' : '<span class="badge">Pusat</span>') + '</td><td class="actions">' +
+            '<button class="btn btn-sm btn-blue" type="button" data-act="soal" data-id="' + esc(e.exam_id) + '">Soal</button> ' +
+            (e.editable ? '<button class="btn btn-sm" type="button" data-act="edit" data-id="' + esc(e.exam_id) + '">Ubah</button> ' +
+              '<button class="btn btn-sm" type="button" data-act="del" data-id="' + esc(e.exam_id) + '">Hapus</button>' : '') + '</td></tr>';
+        }).join('') : '<tr><td colspan="6" class="empty">Belum ada ujian.</td></tr>';
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function openForm(e) {
+      editing = e;
+      form.hidden = false;
+      $('#ex-title').textContent = e ? 'Ubah ' + e.nama_ujian : 'Tambah ujian';
+      form.topic_id.innerHTML = topics.filter(function (t) { return t.status === 'AKTIF' || (e && e.topic_id === t.topic_id); }).map(function (t) {
+        return '<option value="' + esc(t.topic_id) + '">' + esc(t.inisial + ' (' + t.tahun_ajaran + ')') + '</option>';
+      }).join('');
+      form.topic_id.value = e ? e.topic_id : ($('#ex-topic').value || form.topic_id.value);
+      ['kelas', 'kode_mapel', 'nama_mapel'].forEach(function (k) { form[k].value = e ? e[k] : ''; });
+      $('#ex-error').textContent = '';
+    }
+
+    function byId(id) { return exams.filter(function (e) { return e.exam_id === id; })[0]; }
+
+    $('#ex-body').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-act]');
+      if (!b) return;
+      var e = byId(b.getAttribute('data-id'));
+      var act = b.getAttribute('data-act');
+      if (act === 'soal') return SIULIN.openView('questions', { exam_id: e.exam_id }, 'exams');
+      if (act === 'edit') return openForm(e);
+      if (!confirm('Hapus ujian ' + e.nama_ujian + '?')) return;
+      SIULIN.callApi('exam.remove', { exam_ref: e.exam_id }).then(function () { SIULIN.toast('Ujian dihapus.'); load(); })
+        .catch(function (err) { SIULIN.toast(err.message); });
+    });
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var p = { topic_id: form.topic_id.value, kelas: form.kelas.value, kode_mapel: form.kode_mapel.value, nama_mapel: form.nama_mapel.value };
+      if (editing) p.exam_ref = editing.exam_id;
+      SIULIN.callApi(editing ? 'exam.update' : 'exam.create', p)
+        .then(function () { form.hidden = true; SIULIN.toast('Ujian tersimpan.'); load(); })
+        .catch(function (err) { $('#ex-error').textContent = err.message; });
+    });
+    $('#ex-add').addEventListener('click', function () {
+      if (!topics.some(function (t) { return t.status === 'AKTIF'; })) return SIULIN.toast('Belum ada topik ujian aktif dari pusat.');
+      openForm(null);
+    });
+    $('#ex-cancel').addEventListener('click', function () { form.hidden = true; });
+    $('#ex-topic').addEventListener('change', load);
+
+    SIULIN.callApi('topic.list', {}).then(function (d) {
+      topics = d;
+      $('#ex-topic').innerHTML = '<option value="">Semua topik</option>' + d.map(function (t) {
+        return '<option value="' + esc(t.topic_id) + '">' + esc(t.inisial + ' (' + t.tahun_ajaran + ')') + '</option>';
+      }).join('');
+      load();
+    }).catch(function (e) { SIULIN.toast(e.message); });
+  }
+});
+</script>

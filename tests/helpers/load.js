@@ -16,7 +16,10 @@ const FILES = {
   Api: 'Api.gs',
   ScoringService: 'service/ScoringService.gs',
   SchoolService: 'service/SchoolService.gs',
-  UserService: 'service/UserService.gs'
+  UserService: 'service/UserService.gs',
+  TopicService: 'service/TopicService.gs',
+  ExamService: 'service/ExamService.gs',
+  QuestionService: 'service/QuestionService.gs'
 };
 
 function loadApp(opts) {
