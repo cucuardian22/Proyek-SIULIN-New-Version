@@ -31,6 +31,10 @@ function parseArgs(argv) {
     opts[m[1]] = typeof DEFAULTS[m[1]] === 'number' ? Number(v) : v;
   }
   for (const k of ['url', 'token', 'password']) if (!opts[k]) throw new Error('--' + k + ' wajib diisi.');
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(opts.url) && !/^http:\/\/localhost[:/]/.test(opts.url)) {
+    throw new Error('--url harus alamat web app dari Deploy > Manage deployments, berbentuk ' +
+      'https://script.google.com/macros/s/.../exec (yang tertulis: ' + opts.url + ').');
+  }
   return opts;
 }
 
@@ -90,6 +94,18 @@ async function retry(fn) {
   }
 }
 
+/** Submit seperti Exam.html: diulang otomatis dengan jeda makin panjang bila server penuh. */
+const SUBMIT_RETRY_MS = [3000, 6000, 12000, 20000, 30000];
+async function retrySubmit(fn) {
+  for (let i = 0; ; i++) {
+    try { return await fn(); } catch (e) {
+      if (!['NETWORK', 'BUSY', 'INTERNAL', 'TIMEOUT'].includes(e.code) && !/^HTTP_/.test(e.code)) throw e;
+      if (i >= SUBMIT_RETRY_MS.length) throw e;
+      await sleep(jitter(SUBMIT_RETRY_MS[i]));
+    }
+  }
+}
+
 async function student(client, opts, n, state) {
   const username = opts.prefix + String(n).padStart(3, '0');
   await sleep(Math.random() * opts.ramp * 1000);
@@ -113,7 +129,7 @@ async function student(client, opts, n, state) {
       // Browser tidak mengulang auto-save yang gagal; simpanan berikutnya membawa semua jawaban.
       await client.call('attempt.save', sid, { attempt_ref: pkg.attempt_id, seq, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }).catch(() => {});
     }
-    await retry(() => client.call('attempt.submit', sid, { attempt_ref: pkg.attempt_id, seq: seq + 1, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }));
+    await retrySubmit(() => client.call('attempt.submit', sid, { attempt_ref: pkg.attempt_id, seq: seq + 1, jawaban, jumlah_pindah_tab: 0, client_ts: new Date().toISOString() }));
     state.submitted++;
   } catch (e) {
     state.failed.push(username + ': ' + e.message);
@@ -169,9 +185,10 @@ async function main() {
 
   const progress = setInterval(() => {
     const recent = client.calls.filter((c) => c.at > Date.now() - 60000);
-    const bad = recent.filter((c) => !c.ok).length;
+    const bad = recent.filter((c) => !c.ok);
     console.log('[' + Math.round((Date.now() - t0) / 1000) + ' dtk] mulai ' + state.started + '/' + opts.students +
-      ', kumpul ' + state.submitted + ', panggilan 1 menit terakhir ' + recent.length + ' (gagal ' + bad + ')');
+      ', kumpul ' + state.submitted + ', panggilan 1 menit terakhir ' + recent.length + ' (gagal ' + bad.length + ')' +
+      (bad.length ? ', gagal terakhir: ' + bad[bad.length - 1].route + ' ' + bad[bad.length - 1].code : ''));
   }, 30000);
 
   const watchers = [];

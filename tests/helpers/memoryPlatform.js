@@ -26,6 +26,9 @@ function createMemoryPlatform(opts = {}) {
     append(db, name, rows) {
       sheets[key(db, name)].rows.push(...rows.map((r) => r.slice()));
     },
+    appendRow(db, name, values) {
+      sheets[key(db, name)].rows.push(values.slice());
+    },
     writeRow(db, name, dataIndex, values) {
       sheets[key(db, name)].rows[dataIndex] = values.slice();
     }

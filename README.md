@@ -65,6 +65,7 @@ tools/loadtest.js  skrip uji beban (dijalankan di komputer, bukan di Apps Script
 4. `BaseRepo` menolak akses tanpa `ctx`, menyuntikkan `school_id` sesi ke setiap filter dan baris baru, dan mencegah perubahan baris milik sekolah lain.
 5. Semua sel disimpan sebagai teks; tipe (`number`, `bool`, `json`) dikonversi oleh `BaseRepo` sesuai `Schema.gs`. Waktu disimpan sebagai ISO 8601 UTC.
 6. Urutan kolom sheet harus sama dengan `Schema.gs`. `setupSiulin()` menolak berjalan bila sheet berisi data dengan header berbeda.
+7. Jalur siswa (login, mulai, auto-save, submit) tidak memakai kunci global. Penulisan satu baris memakai `appendRow` yang atomik; kunci (`Platform.withLock`) hanya untuk mengubah baris yang sudah ada dan impor banyak baris oleh admin. Attempt ditutup oleh baris di `Results`; kolom status di `Attempts` disalin trigger berkala.
 
 ## Rumus penilaian
 
@@ -104,9 +105,9 @@ npm test
 ## Deploy satu klaster
 
 1. Pasang clasp: `npm install -g @google/clasp`, lalu `clasp login` dengan akun pemilik klaster.
-2. Buat project Apps Script baru (`clasp create --type standalone --title "SIULIN Klaster A" --rootDir src`), atau salin `.clasp.json.example` menjadi `.clasp.json` dan isi `scriptId`.
-3. `clasp push`.
-4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL spreadsheet MASTER dan ATTEMPT.
+2. Buat project baru di [script.google.com](https://script.google.com) (New project, beri nama mis. "SIULIN Klaster A"), salin Script ID dari Project Settings, lalu salin `.clasp.json.example` menjadi `.clasp.json` dan isi `scriptId`. Jangan pakai `clasp create`: perintah itu menimpa `src/appsscript.json` dengan manifest kosong.
+3. `clasp push -f`.
+4. Di editor Apps Script, jalankan `setupSiulin` dan izinkan akses. Log menampilkan URL empat spreadsheet: MASTER, ATTEMPT, JAWABAN, dan HASIL.
 5. Di Project Settings > Script Properties, isi `SETUP_ADMIN_USER` dan `SETUP_ADMIN_PASSWORD`, lalu jalankan `setupSuperAdmin`. Catat waktu hash di log; bila di atas 300 ms, turunkan `Config.HASH_ITERATIONS`.
 6. Jalankan `setupTriggers` agar ujian yang waktunya habis tetap dikumpulkan.
 7. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
@@ -118,11 +119,11 @@ Setiap klaster memakai akun Google pemilik yang berbeda, karena batas 30 eksekus
 
 ## Uji beban
 
-Tujuannya mengukur berapa siswa yang bisa mengerjakan serentak di satu klaster sebelum respons melambat atau gagal. Batas Apps Script yang paling berpengaruh adalah 30 eksekusi serentak per akun pemilik dan antrean kunci (LockService) saat auto-save ditulis ke sheet.
+Tujuannya mengukur berapa siswa yang bisa mengerjakan serentak di satu klaster sebelum respons melambat atau gagal. Batas Apps Script yang paling berpengaruh adalah 30 eksekusi serentak per akun pemilik dan lamanya tiap eksekusi. Auto-save masuk cache setiap kali dan ke sheet paling sering tiap 3 menit (`Config.SAVE_SHEET_SECONDS`).
 
 Jalankan di project Apps Script **terpisah** dengan spreadsheet sendiri, jangan di klaster yang dipakai sekolah. Pakai akun pemilik yang jenisnya sama dengan klaster sungguhan (Workspace atau Gmail), karena kuotanya berbeda.
 
-1. Buat project baru: `clasp create --type standalone --title "SIULIN Uji Beban" --rootDir src`, lalu `clasp push`.
+1. Buat project baru "SIULIN Uji Beban" dengan cara yang sama seperti langkah 2 dan 3 di Deploy satu klaster (project di browser, `.clasp.json`, `clasp push -f`).
 2. Di editor, jalankan `setupSiulin`.
 3. Di Script Properties isi `LOADTEST_PASSWORD` (minimal 8 karakter) dan `LOADTEST_STUDENTS`, misalnya `600` supaya cukup untuk tiga kali uji 200 siswa.
 4. Jalankan `setupLoadTest`. Log menampilkan token dan perintah yang perlu dijalankan. Data yang dibuat: sekolah `UJIBEBAN`, siswa `ub001` dst., pengawas `ubawas`, ujian 40 soal, tes yang sedang berlangsung selama 4 jam.
@@ -140,6 +141,6 @@ node tools/loadtest.js --url <URL /exec> --token <TOKEN> --password <LOADTEST_PA
 
 Opsi lain: `--save-every` (detik, bawaan 60 seperti browser), `--ramp` (login disebar sekian detik, bawaan 120), `--watchers` (pengawas yang memantau tiap 30 detik, bawaan 2), `--timeout`, `--out`.
 
-Membaca hasil: skrip mencetak waktu respons per rute (p50, p95, maks) dan kode gagal, lalu menyimpan detail ke `loadtest-result.json`. Syarat lulus yang dipakai: semua siswa terkumpul, gagal di bawah 1%, dan p95 auto-save di bawah 5 detik. Kode gagal `INTERNAL` biasanya berarti antrean kunci habis waktu; `HTTP_..._HTML` biasanya halaman error Google karena terlalu banyak eksekusi serentak. Jumlah siswa terbesar yang masih lulus adalah kapasitas satu klaster; beri cadangan sekitar 30%.
+Membaca hasil: skrip mencetak waktu respons per rute (p50, p95, maks) dan kode gagal, lalu menyimpan detail ke `loadtest-result.json`. Syarat lulus yang dipakai: semua siswa terkumpul, gagal di bawah 1%, dan p95 auto-save di bawah 5 detik. Kode gagal `BUSY` berarti antrean kunci habis waktu (jalur siswa tidak lagi memakai kunci, jadi kode ini seharusnya tidak muncul); `HTTP_..._HTML` biasanya halaman error Google karena terlalu banyak eksekusi serentak. Jumlah siswa terbesar yang masih lulus adalah kapasitas satu klaster; beri cadangan sekitar 30%.
 
 Uji beban memakai pintu `doPost` yang meneruskan permintaan ke `apiCall` dengan pemeriksaan sesi dan izin yang sama, hanya untuk rute ujian dan monitoring, dan hanya bila Script Property `LOADTEST_ENABLED` bernilai `true`. Di klaster sekolah properti ini tidak pernah diisi.

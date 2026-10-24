@@ -1,14 +1,15 @@
 /**
  * Jalankan dari editor Apps Script (bukan dari web app).
  *
- * 1. setupSiulin()       -> membuat spreadsheet MASTER dan ATTEMPT (bila belum ada),
+ * 1. setupSiulin()       -> membuat spreadsheet MASTER, ATTEMPT, JAWABAN, HASIL (bila belum ada),
  *                           semua sheet, header, dan format kolom teks.
  * 2. Isi Script Properties SETUP_ADMIN_USER dan SETUP_ADMIN_PASSWORD, lalu
  *    setupSuperAdmin()   -> membuat akun SUPER_ADMIN (login dengan kode sekolah PUSAT).
  *    Password dihapus dari Script Properties setelah dipakai.
  *
  * 3. setupTriggers()     -> memasang trigger tiap 10 menit yang mengumpulkan ujian
- *                           yang waktunya habis tanpa ditekan "Selesai".
+ *                           yang waktunya habis tanpa ditekan "Selesai", lalu menyalin
+ *                           status ujian yang sudah dikumpulkan ke sheet Attempts.
  *
  * Aman dijalankan berulang: sheet yang sudah benar tidak diubah.
  *
@@ -16,7 +17,7 @@
  * lihat bagian "Uji beban" di README.
  */
 function setupSiulin() {
-  ['MASTER', 'ATTEMPT'].forEach(function (db) {
+  Schema.dbs().forEach(function (db) {
     var ss = openOrCreateSpreadsheet_(db);
     Schema.names().forEach(function (name) {
       var t = Schema.get(name);
@@ -102,9 +103,13 @@ function setupTriggers() {
  */
 function setupLoadTest() {
   var props = PropertiesService.getScriptProperties();
+  // Nilai Script Property sering ikut tersalin dengan spasi, tanda petik, atau keterangan: ambil angka pertama.
+  var rawStudents = String(props.getProperty('LOADTEST_STUDENTS') || '200');
+  var students = Number((rawStudents.match(/\d+/) || [''])[0]);
+  if (!students) throw new Error('LOADTEST_STUDENTS harus berupa angka, mis. 600. Isi sekarang: "' + rawStudents + '".');
   var info = LoadTest.prepare({
-    students: Number(props.getProperty('LOADTEST_STUDENTS') || 200),
-    password: props.getProperty('LOADTEST_PASSWORD') || ''
+    students: students,
+    password: String(props.getProperty('LOADTEST_PASSWORD') || '').trim().replace(/^["'`]+|["'`]+$/g, '')
   });
   props.setProperty('LOADTEST_ENABLED', 'true');
   Logger.log('Uji beban siap. Kode sekolah ' + info.kode_sekolah + ', siswa ub001 s.d. ub' +
