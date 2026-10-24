@@ -7,6 +7,9 @@
  *    setupSuperAdmin()   -> membuat akun SUPER_ADMIN (login dengan kode sekolah PUSAT).
  *    Password dihapus dari Script Properties setelah dipakai.
  *
+ * 3. setupTriggers()     -> memasang trigger tiap 10 menit yang mengumpulkan ujian
+ *                           yang waktunya habis tanpa ditekan "Selesai".
+ *
  * Aman dijalankan berulang: sheet yang sudah benar tidak diubah.
  */
 function setupSiulin() {
@@ -80,4 +83,12 @@ function setupSuperAdmin() {
   });
   props.deleteProperty('SETUP_ADMIN_PASSWORD');
   Logger.log('SUPER_ADMIN dibuat. Login dengan kode sekolah ' + Config.SUPER_ADMIN_SCHOOL_CODE + '.');
+}
+
+function setupTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'finalizeExpiredAttempts') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('finalizeExpiredAttempts').timeBased().everyMinutes(10).create();
+  Logger.log('Trigger finalizeExpiredAttempts terpasang (tiap 10 menit).');
 }

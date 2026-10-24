@@ -1,0 +1,57 @@
+<script>
+// "Ujian saya" untuk SISWA: daftar tes kelasnya, mulai dengan token, atau lanjutkan.
+SIULIN.view('my-exams', {
+  title: 'Ujian saya',
+  render: function (el) {
+    var esc = SIULIN.esc;
+    el.innerHTML = '<div class="toolbar"><div class="spacer"></div><button class="btn" type="button" id="me-refresh">Muat ulang</button></div><div id="me-list" class="token-grid"><div class="empty">Memuat...</div></div>';
+    var list = el.querySelector('#me-list');
+
+    function stateOf(t) {
+      if (t.attempt && t.attempt.status !== 'PROGRESS') return ['done', 'Sudah dikumpulkan'];
+      if (t.attempt) return ['resume', 'Sedang dikerjakan'];
+      if (t.status === 'BELUM') return ['wait', 'Belum dimulai'];
+      if (t.status === 'SELESAI') return ['closed', 'Sudah berakhir'];
+      return ['start', 'Bisa dimulai'];
+    }
+
+    function load() {
+      SIULIN.callApi('attempt.list').then(function (d) {
+        list.innerHTML = d.length ? d.map(function (t) {
+          var s = stateOf(t);
+          var action = s[0] === 'start'
+            ? '<form class="me-start" data-id="' + esc(t.test_id) + '"><label class="field"><span>Token dari pengawas</span><input name="token" autocomplete="off" maxlength="6" style="text-transform:uppercase;letter-spacing:.1em"></label><button class="btn btn-blue" type="submit">Mulai</button></form>'
+            : s[0] === 'resume' ? '<button class="btn btn-blue" type="button" data-resume="' + esc(t.test_id) + '">Lanjutkan</button>' : '';
+          return '<div class="card"><div class="q-head"><strong>' + esc(t.judul) + '</strong></div>' +
+            '<div class="muted">' + esc(SIULIN.fmtTime(t.mulai)) + ' s.d. ' + esc(SIULIN.fmtTime(t.selesai)) + ' &middot; ' + t.durasi_menit + ' menit</div>' +
+            '<p><strong>' + s[1] + '</strong></p><p class="error me-error" role="alert"></p>' + action + '</div>';
+        }).join('') : '<div class="card empty">Tidak ada ujian untuk kelas Anda saat ini.</div>';
+      }).catch(function (e) { SIULIN.toast(e.message); });
+    }
+
+    function begin(testId, token, errorEl, btn) {
+      if (btn) btn.disabled = true;
+      SIULIN.loading(true);
+      SIULIN.callApi('attempt.start', { test_ref: testId, token: token, user_agent: navigator.userAgent })
+        .then(function (pkg) { SIULIN.show('exam', pkg); })
+        .catch(function (e) { errorEl.textContent = e.message; if (btn) btn.disabled = false; })
+        .then(function () { SIULIN.loading(false); });
+    }
+
+    list.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var f = ev.target;
+      var token = f.token.value.trim().toUpperCase();
+      var errorEl = f.parentNode.querySelector('.me-error');
+      if (!token) { errorEl.textContent = 'Masukkan token dari pengawas.'; return; }
+      begin(f.getAttribute('data-id'), token, errorEl, f.querySelector('button'));
+    });
+    list.addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-resume]');
+      if (b) begin(b.getAttribute('data-resume'), '', b.parentNode.querySelector('.me-error'), b);
+    });
+    el.querySelector('#me-refresh').addEventListener('click', load);
+    load();
+  }
+});
+</script>

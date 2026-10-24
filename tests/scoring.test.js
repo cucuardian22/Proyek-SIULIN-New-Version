@@ -40,7 +40,16 @@ test('PGBS dan PGST: proporsional per pernyataan', () => {
   assert.equal(S.scoreQuestion(st, { a: 'TS', b: 'TS' }), 1.5);
 });
 
-test('ISIAN dan URAIAN menunggu koreksi manual', () => {
+test('ISIAN dinilai otomatis dari daftar jawaban yang diterima', () => {
+  const q = { tipe: 'ISIAN', kunci: ['25', 'Dua puluh lima'], bobot: 2 };
+  assert.equal(S.scoreQuestion(q, ' dua  PULUH lima '), 2);
+  assert.equal(S.scoreQuestion(q, '25'), 2);
+  assert.equal(S.scoreQuestion(q, '26'), 0);
+  assert.equal(S.scoreQuestion(q, ''), 0);
+  assert.equal(S.scoreQuestion(q, undefined), 0);
+});
+
+test('URAIAN menunggu koreksi manual', () => {
   assert.equal(S.scoreQuestion({ tipe: 'URAIAN', bobot: 10 }, 'teks'), null);
 });
 
