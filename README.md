@@ -23,7 +23,9 @@ Tahap 1, bagian fondasi:
 - Monitoring tes berjalan (`service/MonitorService.gs`) untuk PENGAWAS, GURU, dan ADMIN: status tiap siswa, jumlah soal terjawab, sisa waktu, simpan terakhir, tanda "mungkin terputus", jumlah pindah tab, diperbarui tiap 30 detik. Pengawas bisa menambah waktu satu siswa (timer siswa ikut berubah dalam 1 menit) dan mengumpulkan paksa (yang dinilai simpanan otomatis terakhir). Progres dibaca dari cache, bukan sheet, supaya ringan.
 - Alat uji beban (`LoadTest.gs`, `tools/loadtest.js`), lihat bagian Uji beban di bawah.
 
-Berikutnya: menjalankan uji beban di Apps Script sungguhan, lalu menetapkan kapasitas per klaster dari hasilnya.
+Uji beban di Apps Script sungguhan selesai (25 Oktober 2026): satu klaster lulus 200 siswa serentak tanpa gagal dan tanpa baris hilang. Pada 250 siswa data tetap utuh, tetapi 2,5% panggilan kena halaman error Google karena terlalu banyak eksekusi. **Kapasitas satu klaster: 200 siswa serentak.** Sekolah dengan lebih banyak siswa membagi ujian ke beberapa sesi atau memakai klaster tambahan.
+
+Berikutnya: deploy klaster untuk sekolah pilot.
 
 ## Struktur
 
@@ -38,7 +40,8 @@ src/
     Auth.gs        login, logout, sesi, hash password
     Rbac.gs        peta izin per peran
     Api.gs         apiCall(route, sessionId, payload): satu pintu untuk client
-    Setup.gs       setupSiulin(), setupSuperAdmin(), setupTriggers(), setupLoadTest() (dijalankan dari editor)
+    Setup.gs       setupSiulin(), setupSuperAdmin(), setupTriggers(), cekKesiapan(), setupLoadTest() (dijalankan dari editor)
+    Readiness.gs   penilaian hasil cekKesiapan() (murni, diuji di Node.js)
     LoadTest.gs    data dan pintu doPost khusus uji beban (mati secara bawaan)
     repo/          SATU-SATUNYA kode yang menyentuh layanan Google
       GasPlatform.gs   adapter SpreadsheetApp/CacheService/LockService/Properties
@@ -112,6 +115,9 @@ npm test
 6. Jalankan `setupTriggers` agar ujian yang waktunya habis tetap dikumpulkan.
 7. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
 8. Buka URL web app, login dengan kode sekolah `PUSAT`.
+9. Setelah sekolah, pengguna, dan tes diisi, jalankan `cekKesiapan` di editor. Fungsi ini hanya membaca dan mencetak `SIAP` atau `BELUM SIAP` beserta alasannya: spreadsheet dan header, akun SUPER_ADMIN, trigger, mode uji beban harus mati, serta jumlah admin, guru, pengawas, dan siswa tiap sekolah. Jalankan lagi sebelum tiap hari ujian.
+
+Klaster sekolah memakai project dan spreadsheet baru, bukan project uji beban. Jangan pernah mengisi `LOADTEST_ENABLED` atau menjalankan `setupLoadTest` di klaster sekolah.
 
 Catatan: kolom `slot` ditambahkan di akhir kolom data sheet Attempts (sebelum `created_at`). Spreadsheet yang dibuat dengan kode lama tidak bisa dipakai ulang bila Attempts sudah berisi data; buat project dan spreadsheet baru.
 
