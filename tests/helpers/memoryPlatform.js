@@ -1,7 +1,31 @@
 // Platform tiruan di memori untuk unit test di Node.js, antarmuka sama dengan GasPlatform.gs.
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const Schema = require('../../src/server/Schema.gs');
 const Config = require('../../src/server/Config.gs');
+
+/** Baca satu file dari ZIP lewat central directory (pengganti Utilities.unzip). */
+function unzipEntry(base64, name) {
+  const buf = Buffer.from(base64, 'base64');
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0; i--) if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('Could not unzip: invalid archive');
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let n = buf.readUInt16LE(eocd + 10); n > 0; n--) {
+    const method = buf.readUInt16LE(p + 10);
+    const size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const skip = nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    if (buf.toString('utf8', p + 46, p + 46 + nameLen) === name) {
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const data = buf.subarray(start, start + size);
+      return (method === 8 ? zlib.inflateRawSync(data) : data).toString('utf8');
+    }
+    p += 46 + skip;
+  }
+  return null;
+}
 
 function createMemoryPlatform(opts = {}) {
   const sheets = {};
@@ -78,6 +102,7 @@ function createMemoryPlatform(opts = {}) {
     randomToken: () => crypto.randomBytes(32).toString('hex'),
     prop: () => null,
     setProp: () => {},
+    unzipEntry,
     // khusus test
     _sheets: sheets,
     _cache: cache,

@@ -49,6 +49,7 @@ var Api = (function () {
     'question.update': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.update(ctx, p); } },
     'question.remove': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.remove(ctx, p); } },
     'question.import': { permission: 'question.manage', handler: function (ctx, p) { return QuestionService.importRows(ctx, p); } },
+    'question.readSipSoal': { permission: 'question.manage', handler: function (ctx, p) { return SipSoalService.read(ctx, p); } },
 
     'test.list':     { permission: 'test.manage', handler: function (ctx, p) { return TestService.list(ctx, p); } },
     'test.create':   { permission: 'test.manage', handler: function (ctx, p) { return TestService.create(ctx, p); } },
