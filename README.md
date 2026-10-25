@@ -14,7 +14,7 @@ Tahap 1, bagian fondasi:
 - Sekolah (SUPER_ADMIN) dan pengguna: tambah, ubah, reset password, nonaktifkan, import dari tempelan Excel/Sheets atau CSV (dicek seluruhnya sebelum disimpan, dikirim per 100 baris), export CSV
 
 - Topik ujian (SUPER_ADMIN), ujian per mapel/kelas dengan nama otomatis, GURU dibatasi ke mapel yang diampu
-- Bank soal: editor 6 tipe (PG, PGK, PGBS, PGST, ISIAN, URAIAN), import dari template, bank soal pusat ber-scope GLOBAL yang terbaca semua sekolah
+- Bank soal: editor 6 tipe (PG, PGK, PGBS, PGST, ISIAN, URAIAN), import dari template, ambil soal dari file Word "Form Import Soal" unduhan SIP SOAL (PG/PGK, kunci dari skor > 0, bobot 1), bank soal pusat ber-scope GLOBAL yang terbaca semua sekolah
 
 - Jadwal tes (kelas peserta, rentang waktu, durasi, acak soal/opsi, KKM) dan token tes yang bisa diganti pengawas; soal ujian terkunci setelah tes dimulai
 

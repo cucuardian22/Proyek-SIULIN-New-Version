@@ -9,6 +9,7 @@
  *             writeRow(db, sheet, dataIndex, values)  (tanpa kunci untuk baris yang sudah dipesan)
  *   cache():  get, put, remove, getAll, putAll
  *   withLock(fn), uuid(), now(), hmacSha256Hex(key, msg), randomToken(), prop(key)
+ *   unzipEntry(base64, name) -> isi teks satu file di dalam ZIP (mis. word/document.xml di .docx), null jika tidak ada
  */
 var Platform = (function () {
   var spreadsheets = {};
@@ -149,6 +150,14 @@ var Platform = (function () {
     return toHex(Utilities.computeHmacSha256Signature(message, key));
   }
 
+  function unzipEntry(base64, name) {
+    var files = Utilities.unzip(Utilities.newBlob(Utilities.base64Decode(base64), 'application/zip', 'file.zip'));
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].getName() === name) return files[i].getDataAsString('UTF-8');
+    }
+    return null;
+  }
+
   function randomToken() {
     return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
   }
@@ -162,6 +171,7 @@ var Platform = (function () {
     hmacSha256Hex: hmacSha256Hex,
     randomToken: randomToken,
     prop: prop,
-    setProp: setProp
+    setProp: setProp,
+    unzipEntry: unzipEntry
   };
 })();

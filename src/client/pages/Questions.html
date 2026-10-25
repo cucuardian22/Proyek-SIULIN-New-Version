@@ -1,5 +1,5 @@
 <script>
-// Bank soal satu ujian: daftar soal, editor 6 tipe, import dari template.
+// Bank soal satu ujian: daftar soal, editor 6 tipe, import dari template atau dari file SIP SOAL.
 SIULIN.view('questions', {
   title: 'Bank soal',
   render: function (el, params) {
@@ -20,7 +20,7 @@ SIULIN.view('questions', {
 
     el.innerHTML =
       '<div class="toolbar"><button class="btn" type="button" id="q-back">&larr; Daftar ujian</button><div><strong id="q-exam"></strong><div class="muted" id="q-meta"></div></div>' +
-      '<div class="spacer"></div><span id="q-tools"><button class="btn" type="button" id="q-import-open">Import</button> <button class="btn btn-blue" type="button" id="q-add">Tambah soal</button></span></div>' +
+      '<div class="spacer"></div><span id="q-tools"><button class="btn" type="button" id="q-sip-open">Ambil dari SIP SOAL</button> <button class="btn" type="button" id="q-import-open">Import</button> <button class="btn btn-blue" type="button" id="q-add">Tambah soal</button></span></div>' +
       '<form id="q-form" class="card panel" hidden novalidate><h2 id="q-form-title"></h2><div class="grid-2">' +
       '<label class="field"><span>Tipe soal</span><select name="tipe">' + Object.keys(TYPE_LABEL).map(function (t) { return '<option value="' + t + '">' + t + ' - ' + TYPE_LABEL[t] + '</option>'; }).join('') + '</select></label>' +
       '<label class="field"><span>Bobot</span><input name="bobot" type="number" min="0.25" step="0.25" value="1"></label></div>' +
@@ -28,6 +28,10 @@ SIULIN.view('questions', {
       '<label class="field"><span>Link gambar/media (opsional, https://)</span><input name="media_url"></label>' +
       '<div id="q-answer"></div><p class="error" id="q-error" role="alert"></p>' +
       '<button class="btn btn-blue" type="submit">Simpan</button> <button class="btn" type="button" id="q-cancel">Batal</button></form>' +
+      '<div id="q-sip" class="card panel" hidden><h2>Ambil soal dari SIP SOAL</h2>' +
+      '<p class="muted">Di SIP SOAL, unduh "Form Import Soal" topik yang dipilih (file Word .docx), lalu pilih file itu di sini. Soal PG dan PGK beserta kuncinya terbawa; bobot setiap soal 1 dan bisa diubah setelahnya. Gambar di dalam file tidak ikut, tambahkan lewat link gambar.</p>' +
+      '<div class="toolbar"><input type="file" id="q-sip-file" accept=".docx"></div><div id="q-sip-result" style="margin-top:12px"></div>' +
+      '<button class="btn btn-blue" type="button" id="q-sip-run" hidden>Periksa lalu import</button> <button class="btn" type="button" id="q-sip-close">Tutup</button></div>' +
       '<div id="q-import" class="card panel" hidden><h2>Import soal</h2>' +
       '<p class="muted">Satu baris per soal. Kolom: tipe, teks, bobot, a sampai e (opsi atau pernyataan), kunci, media_url. Tempel dari Excel/Google Sheets atau pilih file CSV. Lihat contoh semua tipe di template.</p>' +
       '<div class="toolbar"><input type="file" id="q-file" accept=".csv,.tsv,.txt"><button class="btn btn-sm" type="button" id="q-template">Unduh template</button></div>' +
@@ -133,6 +137,7 @@ SIULIN.view('questions', {
       editing = q;
       form.hidden = false;
       $('#q-import').hidden = true;
+      $('#q-sip').hidden = true;
       $('#q-form-title').textContent = q ? 'Ubah soal' : 'Tambah soal';
       form.tipe.value = q ? q.tipe : 'PG';
       form.bobot.value = q ? q.bobot : 1;
@@ -193,9 +198,9 @@ SIULIN.view('questions', {
 
     // ---------- import ----------
 
-    function showErrors(errors) {
-      $('#q-import-result').innerHTML = '<div class="notice"><strong>Tidak ada yang disimpan.</strong> Perbaiki baris berikut:</div><ul class="errors">' +
-        errors.slice(0, 50).map(function (e) { return '<li>Baris ' + e.row + ': ' + esc(e.messages.join(' ')) + '</li>'; }).join('') + '</ul>';
+    function showErrors(out, errors, label) {
+      out.innerHTML = '<div class="notice"><strong>Tidak ada yang disimpan.</strong> Perbaiki ' + label.toLowerCase() + ' berikut:</div><ul class="errors">' +
+        errors.slice(0, 50).map(function (e) { return '<li>' + label + ' ' + e.row + ': ' + esc(e.messages.join(' ')) + '</li>'; }).join('') + '</ul>';
     }
 
     function send(parts, dryRun, onProgress) {
@@ -212,27 +217,63 @@ SIULIN.view('questions', {
       }, Promise.resolve()).then(function () { return result; });
     }
 
+    /** Periksa semua baris dulu (dry run), baru simpan jika tidak ada kesalahan. */
+    function runImport(rows, btn, out, label, onDone) {
+      var parts = [];
+      for (var i = 0; i < rows.length; i += CHUNK) parts.push(rows.slice(i, i + CHUNK));
+      btn.disabled = true;
+      out.innerHTML = '<div class="notice">Memeriksa ' + rows.length + ' soal...</div>';
+      send(parts, true, function () {}).then(function (check) {
+        if (check.errors.length) return showErrors(out, check.errors, label);
+        return send(parts, false, function (d, t) { out.innerHTML = '<div class="notice">Menyimpan bagian ' + d + ' dari ' + t + '...</div>'; }).then(function (r) {
+          if (r.errors.length) return showErrors(out, r.errors, label);
+          out.innerHTML = '<div class="notice ok">' + r.inserted + ' soal berhasil diimport.</div>';
+          onDone();
+          load();
+        });
+      }).catch(function (e) { out.innerHTML = '<div class="notice">' + esc(e.message) + '</div>'; })
+        .then(function () { btn.disabled = false; });
+    }
+
     $('#q-import-run').addEventListener('click', function () {
       var rows = SIULIN.parseTable($('#q-paste').value);
       var out = $('#q-import-result');
       if (!rows.length) { out.innerHTML = '<div class="notice">Tempel data atau pilih file dulu.</div>'; return; }
       if (!('tipe' in rows[0]) || !('teks' in rows[0])) { out.innerHTML = '<div class="notice">Baris judul wajib memuat kolom <strong>tipe</strong> dan <strong>teks</strong>. Gunakan template.</div>'; return; }
-      var parts = [];
-      for (var i = 0; i < rows.length; i += CHUNK) parts.push(rows.slice(i, i + CHUNK));
-      var btn = this;
-      btn.disabled = true;
-      out.innerHTML = '<div class="notice">Memeriksa ' + rows.length + ' soal...</div>';
-      send(parts, true, function () {}).then(function (check) {
-        if (check.errors.length) return showErrors(check.errors);
-        return send(parts, false, function (d, t) { out.innerHTML = '<div class="notice">Menyimpan bagian ' + d + ' dari ' + t + '...</div>'; }).then(function (r) {
-          if (r.errors.length) return showErrors(r.errors);
-          out.innerHTML = '<div class="notice ok">' + r.inserted + ' soal berhasil diimport.</div>';
-          $('#q-paste').value = '';
-          load();
-        });
-      }).catch(function (e) { out.innerHTML = '<div class="notice">' + esc(e.message) + '</div>'; })
-        .then(function () { btn.disabled = false; });
+      runImport(rows, this, out, 'Baris', function () { $('#q-paste').value = ''; });
     });
+
+    // ---------- SIP SOAL ----------
+
+    var sipRows = null;
+    $('#q-sip-file').addEventListener('change', function () {
+      var f = this.files[0];
+      var out = $('#q-sip-result');
+      sipRows = null;
+      $('#q-sip-run').hidden = true;
+      if (!f) return;
+      if (f.size > 5 * 1024 * 1024) { out.innerHTML = '<div class="notice">File maksimal 5 MB.</div>'; return; }
+      out.innerHTML = '<div class="notice">Membaca file...</div>';
+      var r = new FileReader();
+      r.onload = function () {
+        SIULIN.callApi('question.readSipSoal', { exam_ref: params.exam_id, file_base64: r.result }).then(function (d) {
+          sipRows = d.rows;
+          var count = {};
+          d.rows.forEach(function (x) { count[x.tipe] = (count[x.tipe] || 0) + 1; });
+          out.innerHTML = '<div class="notice ok">' + d.rows.length + ' soal terbaca (' + Object.keys(count).map(function (t) { return count[t] + ' ' + esc(t); }).join(', ') + ').</div>' +
+            (d.warnings.length ? '<ul class="errors">' + d.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' : '');
+          $('#q-sip-run').hidden = false;
+        }).catch(function (e) { out.innerHTML = '<div class="notice">' + esc(e.message) + '</div>'; });
+      };
+      r.readAsDataURL(f);
+    });
+    $('#q-sip-run').addEventListener('click', function () {
+      if (!sipRows) return;
+      var btn = this;
+      runImport(sipRows, btn, $('#q-sip-result'), 'Soal', function () { sipRows = null; btn.hidden = true; $('#q-sip-file').value = ''; });
+    });
+    $('#q-sip-open').addEventListener('click', function () { $('#q-sip').hidden = false; $('#q-import').hidden = true; form.hidden = true; });
+    $('#q-sip-close').addEventListener('click', function () { $('#q-sip').hidden = true; });
 
     $('#q-file').addEventListener('change', function () {
       var f = this.files[0];
@@ -242,7 +283,7 @@ SIULIN.view('questions', {
       r.readAsText(f);
     });
     $('#q-template').addEventListener('click', function () { SIULIN.download('template-soal.csv', SIULIN.toCsv(TEMPLATE)); });
-    $('#q-import-open').addEventListener('click', function () { $('#q-import').hidden = false; form.hidden = true; });
+    $('#q-import-open').addEventListener('click', function () { $('#q-import').hidden = false; $('#q-sip').hidden = true; form.hidden = true; });
     $('#q-import-close').addEventListener('click', function () { $('#q-import').hidden = true; });
     $('#q-add').addEventListener('click', function () { openForm(null); });
     $('#q-cancel').addEventListener('click', function () { form.hidden = true; });
