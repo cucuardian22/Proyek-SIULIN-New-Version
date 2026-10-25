@@ -65,7 +65,7 @@ tools/loadtest.js  skrip uji beban (dijalankan di komputer, bukan di Apps Script
 4. `BaseRepo` menolak akses tanpa `ctx`, menyuntikkan `school_id` sesi ke setiap filter dan baris baru, dan mencegah perubahan baris milik sekolah lain.
 5. Semua sel disimpan sebagai teks; tipe (`number`, `bool`, `json`) dikonversi oleh `BaseRepo` sesuai `Schema.gs`. Waktu disimpan sebagai ISO 8601 UTC.
 6. Urutan kolom sheet harus sama dengan `Schema.gs`. `setupSiulin()` menolak berjalan bila sheet berisi data dengan header berbeda.
-7. Jalur siswa (login, mulai, auto-save, submit) tidak memakai kunci global. Penulisan satu baris memakai `appendRow` yang atomik; kunci (`Platform.withLock`) hanya untuk mengubah baris yang sudah ada dan impor banyak baris oleh admin. Attempt ditutup oleh baris di `Results`; kolom status di `Attempts` disalin trigger berkala.
+7. Jangan memakai `appendRow` untuk penulisan serentak: uji beban 250 siswa membuktikan `appendRow` dari banyak eksekusi bisa saling menimpa (baris Sessions, Attempts, Results, dan Answers hilang walaupun server membalas berhasil). Tabel yang ditulis siswa memakai slot (`slot` di `Schema.gs`): nomor baris dipesan di bawah kunci singkat yang hanya mengubah penghitung di cache, lalu baris ditulis ke nomor itu tanpa kunci. Login memesan satu slot sesi, mulai tes memesan satu slot attempt; auto-save (`AnswerBatches`) dan submit (`Answers`, `Results`) menulis ke slot attempt itu sendiri tanpa kunci. Kunci panjang (`Platform.withLock`) hanya untuk mengubah baris yang sudah ada dan untuk data induk yang diubah admin. Attempt ditutup oleh baris di `Results`; kolom status di `Attempts` disalin trigger berkala (paling banyak 60 baris per jalan).
 
 ## Rumus penilaian
 
@@ -113,6 +113,8 @@ npm test
 7. Deploy > New deployment > Web app, Execute as: Me, Who has access: Anyone.
 8. Buka URL web app, login dengan kode sekolah `PUSAT`.
 
+Catatan: kolom `slot` ditambahkan di akhir kolom data sheet Attempts (sebelum `created_at`). Spreadsheet yang dibuat dengan kode lama tidak bisa dipakai ulang bila Attempts sudah berisi data; buat project dan spreadsheet baru.
+
 Catatan: kolom `kelas_peserta` ditambahkan ke sheet Tests. Bila `setupSiulin()` sudah pernah dijalankan dan sheet Tests masih kosong, jalankan lagi; bila sudah berisi data, tambahkan kolom itu di akhir header secara manual.
 
 Setiap klaster memakai akun Google pemilik yang berbeda, karena batas 30 eksekusi serentak berlaku per akun.
@@ -141,6 +143,6 @@ node tools/loadtest.js --url <URL /exec> --token <TOKEN> --password <LOADTEST_PA
 
 Opsi lain: `--save-every` (detik, bawaan 60 seperti browser), `--ramp` (login disebar sekian detik, bawaan 120), `--watchers` (pengawas yang memantau tiap 30 detik, bawaan 2), `--timeout`, `--out`.
 
-Membaca hasil: skrip mencetak waktu respons per rute (p50, p95, maks) dan kode gagal, lalu menyimpan detail ke `loadtest-result.json`. Syarat lulus yang dipakai: semua siswa terkumpul, gagal di bawah 1%, dan p95 auto-save di bawah 5 detik. Bila ada kode `INTERNAL`, skrip juga mencetak pesan galat dari server (hanya terkirim di project uji beban). Kode gagal `BUSY` berarti antrean kunci habis waktu (jalur siswa tidak lagi memakai kunci, jadi kode ini seharusnya tidak muncul); `HTTP_..._HTML` biasanya halaman error Google karena terlalu banyak eksekusi serentak. Jumlah siswa terbesar yang masih lulus adalah kapasitas satu klaster; beri cadangan sekitar 30%.
+Membaca hasil: skrip mencetak waktu respons per rute (p50, p95, maks) dan kode gagal, lalu menyimpan detail ke `loadtest-result.json`. Syarat lulus yang dipakai: semua siswa terkumpul, gagal di bawah 1%, p95 auto-save di bawah 5 detik, dan tidak ada baris yang hilang. Di akhir putaran skrip memanggil rute `loadtest.verify`: server memeriksa bahwa setiap siswa yang berhasil login, mulai, dan kumpul benar-benar punya baris Sessions, Attempts, Results, dan Answers di sheet. Bila ada kode `INTERNAL`, skrip juga mencetak pesan galat dari server (hanya terkirim di project uji beban). Kode gagal `BUSY` berarti antrean kunci habis waktu (jalur siswa tidak lagi memakai kunci, jadi kode ini seharusnya tidak muncul); `HTTP_..._HTML` biasanya halaman error Google karena terlalu banyak eksekusi serentak. Jumlah siswa terbesar yang masih lulus adalah kapasitas satu klaster; beri cadangan sekitar 30%.
 
 Uji beban memakai pintu `doPost` yang meneruskan permintaan ke `apiCall` dengan pemeriksaan sesi dan izin yang sama, hanya untuk rute ujian dan monitoring, dan hanya bila Script Property `LOADTEST_ENABLED` bernilai `true`. Di klaster sekolah properti ini tidak pernah diisi.

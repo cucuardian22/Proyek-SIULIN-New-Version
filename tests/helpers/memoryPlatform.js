@@ -1,6 +1,7 @@
 // Platform tiruan di memori untuk unit test di Node.js, antarmuka sama dengan GasPlatform.gs.
 const crypto = require('node:crypto');
 const Schema = require('../../src/server/Schema.gs');
+const Config = require('../../src/server/Config.gs');
 
 function createMemoryPlatform(opts = {}) {
   const sheets = {};
@@ -26,13 +27,25 @@ function createMemoryPlatform(opts = {}) {
     append(db, name, rows) {
       sheets[key(db, name)].rows.push(...rows.map((r) => r.slice()));
     },
-    appendRow(db, name, values) {
-      sheets[key(db, name)].rows.push(values.slice());
+    // Sama dengan GasPlatform: penghitung di cache, dihitung ulang dari baris terakhir + SLOT_GAP bila hilang.
+    reserveRows(group, list, count) {
+      return global.Platform.withLock(() => reserve(group, list, count));
     },
     writeRow(db, name, dataIndex, values) {
-      sheets[key(db, name)].rows[dataIndex] = values.slice();
+      const s = sheets[key(db, name)];
+      while (s.rows.length < dataIndex) s.rows.push(s.header.map(() => ''));
+      s.rows[dataIndex] = values.slice();
     }
   };
+  const reserved = [];
+  function reserve(group, list, count) {
+    const k = 'slot:' + group;
+    let next = live(k) === null ? NaN : Number(live(k));
+    if (!(next >= 0)) next = Math.max(0, ...list.map((t) => sheets[key(t.db, t.name)].rows.length)) + Config.SLOT_GAP;
+    put(k, String(next + count), 21600);
+    reserved.push({ group, first: next, count });
+    return next;
+  }
 
   // Meniru CacheService: nilai kedaluwarsa setelah ttl detik (default 600).
   function live(k) {
@@ -68,6 +81,7 @@ function createMemoryPlatform(opts = {}) {
     // khusus test
     _sheets: sheets,
     _cache: cache,
+    _reserved: reserved,
     _advance(seconds) { clock = new Date(clock.getTime() + seconds * 1000); }
   };
 }
