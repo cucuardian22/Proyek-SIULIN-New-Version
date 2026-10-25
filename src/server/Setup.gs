@@ -11,6 +11,10 @@
  *                           yang waktunya habis tanpa ditekan "Selesai", lalu menyalin
  *                           status ujian yang sudah dikumpulkan ke sheet Attempts.
  *
+ * 4. cekKesiapan()       -> hanya membaca: memeriksa spreadsheet, akun, trigger, mode uji beban,
+ *                           dan data sekolah, lalu mencetak SIAP / BELUM SIAP di log.
+ *                           Jalankan sebelum klaster dipakai dan sebelum tiap hari ujian.
+ *
  * Aman dijalankan berulang: sheet yang sudah benar tidak diubah.
  *
  * Khusus project uji beban (bukan klaster sekolah): setupLoadTest() dan stopLoadTest(),
@@ -95,6 +99,51 @@ function setupTriggers() {
   });
   ScriptApp.newTrigger('finalizeExpiredAttempts').timeBased().everyMinutes(10).create();
   Logger.log('Trigger finalizeExpiredAttempts terpasang (tiap 10 menit).');
+}
+
+function cekKesiapan() {
+  var props = PropertiesService.getScriptProperties();
+  var SYSTEM = Auth.SYSTEM;
+  var dbs = Schema.dbs().map(function (db) {
+    var id = props.getProperty(db + '_ID');
+    if (!id) return { db: db, ok: false, error: 'belum dibuat' };
+    var ss;
+    try { ss = SpreadsheetApp.openById(id); } catch (e) { return { db: db, ok: false, error: 'tidak bisa dibuka (' + e.message + ')' }; }
+    var sheets = Schema.names().filter(function (n) { return Schema.get(n).db === db; }).map(function (name) {
+      var sh = ss.getSheetByName(name);
+      if (!sh) return { name: name, ok: false, error: 'tidak ada' };
+      var header = Schema.get(name).columns.map(function (c) { return c.name; });
+      var current = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0];
+      if (current.join('|') !== header.join('|')) return { name: name, ok: false, error: 'header berbeda dengan Schema.gs' };
+      return { name: name, ok: true };
+    });
+    return { db: db, ok: true, sheets: sheets };
+  });
+
+  var facts = {
+    timeZone: Session.getScriptTimeZone(),
+    dbs: dbs,
+    setupPasswordLeft: !!props.getProperty('SETUP_ADMIN_PASSWORD'),
+    triggerInstalled: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'finalizeExpiredAttempts'; }),
+    loadTestEnabled: props.getProperty('LOADTEST_ENABLED') === 'true',
+    superAdmins: 0, loadTestSchool: false, schools: []
+  };
+
+  if (dbs.every(function (d) { return d.ok && d.sheets.every(function (s) { return s.ok; }); })) {
+    var users = Repos.users().findMany(SYSTEM, {});
+    var tests = Repos.tests().findMany(SYSTEM, {});
+    facts.superAdmins = users.filter(function (u) { return u.role === 'SUPER_ADMIN' && u.status === 'AKTIF'; }).length;
+    facts.schools = Repos.schools().findMany(SYSTEM, {}).map(function (s) {
+      var mine = users.filter(function (u) { return u.school_id === s.school_id && u.status === 'AKTIF'; });
+      function count(role) { return mine.filter(function (u) { return u.role === role; }).length; }
+      if (s.nama_unik === LoadTest.SCHOOL_CODE) facts.loadTestSchool = true;
+      return { nama_unik: s.nama_unik, status: s.status, admin: count('ADMIN'), guru: count('GURU'),
+        pengawas: count('PENGAWAS'), siswa: count('SISWA'),
+        tes: tests.filter(function (t) { return t.school_id === s.school_id; }).length };
+    });
+  }
+
+  Logger.log(Readiness.format(Readiness.evaluate(facts)));
 }
 
 /**
